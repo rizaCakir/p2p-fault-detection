@@ -1,0 +1,29 @@
+# Go
+backend/bin/
+backend/*.exe
+backend/vendor/
+
+# Node / Dashboard
+dashboard/node_modules/
+dashboard/dist/
+dashboard/.env*
+
+# PlatformIO / ESP32
+esp32-firmware/.pio/
+esp32-firmware/.vscode/
+
+# SQLite database
+*.db
+*.sqlite
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# Claude Code local settings
+.claude/settings.local.json
