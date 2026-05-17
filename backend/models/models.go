@@ -50,6 +50,19 @@ type NodeHealth struct {
 	Online   bool      `json:"online"` // computed, not stored
 }
 
+// TelemetryLog is a time-series row in the telemetry_log SQLite table.
+// Written on every periodic telemetry message so the dashboard can render
+// a gas-concentration trend chart.
+type TelemetryLog struct {
+	ID        int64     `json:"id"`
+	Timestamp time.Time `json:"timestamp"`
+	NodeID    string    `json:"node_id"`
+	ZoneID    string    `json:"zone_id"`
+	GasVal    int       `json:"gas_val"`
+	Flame     bool      `json:"flame"`
+	State     string    `json:"state"`
+}
+
 // SBCHeartbeat is published by each backend instance to sbc/heartbeat/{id}
 type SBCHeartbeat struct {
 	NodeID    string    `json:"node_id"`

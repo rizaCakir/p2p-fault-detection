@@ -12,6 +12,7 @@ import (
 	"p2pfault/backend/api"
 	"p2pfault/backend/db"
 	"p2pfault/backend/mqtt"
+	"p2pfault/backend/registry"
 )
 
 func main() {
@@ -30,12 +31,17 @@ func main() {
 	defer database.Close()
 	log.Printf("[DB] opened %s", dbPath)
 
+	// ── SBC tracker ──────────────────────────────────────────────────
+	// A node is considered offline if no heartbeat has been received for 90 s
+	// (3× the 30 s publish interval gives two missed beats before flagging).
+	tracker := registry.NewSBCTracker(90 * time.Second)
+
 	// ── WebSocket hub ─────────────────────────────────────────────────
 	hub := api.NewHub()
 	go hub.Run()
 
 	// ── MQTT subscriber ───────────────────────────────────────────────
-	sub := mqtt.NewSubscriber([]string{mqttBroker1, mqttBroker2}, database, hub, sbcNodeID)
+	sub := mqtt.NewSubscriber([]string{mqttBroker1, mqttBroker2}, database, hub, sbcNodeID, tracker)
 	if err := sub.Connect(); err != nil {
 		log.Fatalf("MQTT connect failed: %v", err)
 	}
@@ -43,7 +49,7 @@ func main() {
 	go sub.StartHeartbeat(30 * time.Second)
 
 	// ── HTTP server ───────────────────────────────────────────────────
-	router := api.NewRouter(database, hub)
+	router := api.NewRouter(database, hub, tracker)
 	srv := &http.Server{
 		Addr:         listenAddr,
 		Handler:      router,

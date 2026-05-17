@@ -11,8 +11,9 @@ AlertManager::AlertManager(int buzzerPin, int ledRedPin, int ledGreenPin)
 void AlertManager::begin() {
     pinMode(_ledRedPin,   OUTPUT);
     pinMode(_ledGreenPin, OUTPUT);
+    ledcAttach(_buzzerPin, 2000, 8); // attach once; freq/duty changed later
     deactivateAlarm();
-    digitalWrite(_ledGreenPin, HIGH); // green on = system healthy
+    digitalWrite(_ledGreenPin, HIGH);
 }
 
 void AlertManager::onLocalFault(FaultType fault) {
@@ -50,13 +51,12 @@ void AlertManager::update() {
 }
 
 void AlertManager::activateAlarm(bool critical) {
-    // LEDC channel 0 must be set up in main.cpp before begin() is called
-    uint32_t freq = critical ? 1200 : 600; // Hz
-    ledcWriteTone(0, freq);
+    uint32_t freq = critical ? 1200 : 600;
+    ledcWriteTone(_buzzerPin, freq); // sets freq + 50% duty
 }
 
 void AlertManager::deactivateAlarm() {
-    ledcWriteTone(0, 0);
+    ledcWrite(_buzzerPin, 0); // zero duty = silent
     digitalWrite(_ledRedPin,   LOW);
     digitalWrite(_ledGreenPin, LOW);
 }

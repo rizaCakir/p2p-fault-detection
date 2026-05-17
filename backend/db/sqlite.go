@@ -44,8 +44,9 @@ func (d *DB) migrate() error {
 			severity   TEXT NOT NULL,
 			value      INTEGER NOT NULL
 		);
-		CREATE INDEX IF NOT EXISTS idx_event_ts   ON event_log(timestamp DESC);
-		CREATE INDEX IF NOT EXISTS idx_event_node ON event_log(node_id);
+		CREATE INDEX IF NOT EXISTS idx_event_ts       ON event_log(timestamp DESC);
+		CREATE INDEX IF NOT EXISTS idx_event_node     ON event_log(node_id);
+		CREATE INDEX IF NOT EXISTS idx_event_severity ON event_log(severity);
 
 		CREATE TABLE IF NOT EXISTS node_health (
 			node_id   TEXT PRIMARY KEY,
@@ -54,6 +55,17 @@ func (d *DB) migrate() error {
 			gas_val   INTEGER  NOT NULL DEFAULT 0,
 			state     TEXT     NOT NULL DEFAULT 'IDLE'
 		);
+
+		CREATE TABLE IF NOT EXISTS telemetry_log (
+			id        INTEGER PRIMARY KEY AUTOINCREMENT,
+			timestamp DATETIME NOT NULL,
+			node_id   TEXT NOT NULL,
+			zone_id   TEXT NOT NULL,
+			gas_val   INTEGER NOT NULL,
+			flame     INTEGER NOT NULL DEFAULT 0,
+			state     TEXT    NOT NULL DEFAULT 'IDLE'
+		);
+		CREATE INDEX IF NOT EXISTS idx_telem_node_ts ON telemetry_log(node_id, timestamp DESC);
 	`)
 	return err
 }
@@ -65,6 +77,19 @@ func (d *DB) InsertEvent(e *models.EventLog) error {
 		`INSERT INTO event_log (timestamp, node_id, zone_id, fault_type, severity, value)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
 		e.Timestamp, e.NodeID, e.ZoneID, e.FaultType, e.Severity, e.Value,
+	)
+	return err
+}
+
+func (d *DB) InsertTelemetryLog(t *models.TelemetryLog) error {
+	flame := 0
+	if t.Flame {
+		flame = 1
+	}
+	_, err := d.conn.Exec(
+		`INSERT INTO telemetry_log (timestamp, node_id, zone_id, gas_val, flame, state)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		t.Timestamp, t.NodeID, t.ZoneID, t.GasVal, flame, t.State,
 	)
 	return err
 }
@@ -108,17 +133,35 @@ func (d *DB) GetAllNodes(offlineAfter time.Duration) ([]models.NodeHealth, error
 	return nodes, rows.Err()
 }
 
-func (d *DB) GetAlertHistory(limit, offset int) ([]models.EventLog, error) {
+// AlertFilter holds optional query constraints for GetAlertHistory.
+type AlertFilter struct {
+	NodeID   string
+	Severity string // "WARNING" | "CRITICAL" | ""
+	Limit    int
+	Offset   int
+}
+
+// GetAlertHistory returns paginated alert events plus the total matching row count.
+func (d *DB) GetAlertHistory(f AlertFilter) (events []models.EventLog, total int, err error) {
+	where, args := buildAlertWhere(f.NodeID, f.Severity)
+
+	if err = d.conn.QueryRow(
+		`SELECT COUNT(*) FROM event_log`+where, args...,
+	).Scan(&total); err != nil {
+		return
+	}
+
 	rows, err := d.conn.Query(
 		`SELECT event_id, timestamp, node_id, zone_id, fault_type, severity, value
-		 FROM event_log ORDER BY timestamp DESC LIMIT ? OFFSET ?`,
-		limit, offset,
+		 FROM event_log`+where+` ORDER BY timestamp DESC LIMIT ? OFFSET ?`,
+		append(args, f.Limit, f.Offset)...,
 	)
 	if err != nil {
-		return nil, err
+		return
 	}
 	defer rows.Close()
-	return scanEvents(rows)
+	events, err = scanEvents(rows)
+	return
 }
 
 func (d *DB) GetNodeTelemetry(nodeID string, limit int) ([]models.EventLog, error) {
@@ -132,6 +175,51 @@ func (d *DB) GetNodeTelemetry(nodeID string, limit int) ([]models.EventLog, erro
 	}
 	defer rows.Close()
 	return scanEvents(rows)
+}
+
+// GetGasHistory returns time-series telemetry rows for a single node,
+// most-recent first. Used by the dashboard gas-concentration trend chart.
+func (d *DB) GetGasHistory(nodeID string, limit int) ([]models.TelemetryLog, error) {
+	rows, err := d.conn.Query(
+		`SELECT id, timestamp, node_id, zone_id, gas_val, flame, state
+		 FROM telemetry_log WHERE node_id = ? ORDER BY timestamp DESC LIMIT ?`,
+		nodeID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	logs := make([]models.TelemetryLog, 0)
+	for rows.Next() {
+		var t models.TelemetryLog
+		var flame int
+		if err := rows.Scan(&t.ID, &t.Timestamp, &t.NodeID, &t.ZoneID, &t.GasVal, &flame, &t.State); err != nil {
+			return nil, err
+		}
+		t.Flame = flame != 0
+		logs = append(logs, t)
+	}
+	return logs, rows.Err()
+}
+
+// buildAlertWhere constructs the optional WHERE clause and its argument slice.
+func buildAlertWhere(nodeID, severity string) (string, []interface{}) {
+	where := ""
+	args := []interface{}{}
+	if nodeID != "" {
+		where += " WHERE node_id = ?"
+		args = append(args, nodeID)
+	}
+	if severity != "" {
+		if where == "" {
+			where += " WHERE severity = ?"
+		} else {
+			where += " AND severity = ?"
+		}
+		args = append(args, severity)
+	}
+	return where, args
 }
 
 func scanEvents(rows *sql.Rows) ([]models.EventLog, error) {

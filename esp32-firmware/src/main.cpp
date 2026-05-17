@@ -64,10 +64,6 @@ static void onPeerAlert(const char* nodeId, const char* faultType, int val) {
 void setup() {
     Serial.begin(115200);
 
-    // Set up LEDC PWM channel for the buzzer (must happen before AlertManager::begin)
-    ledcSetup(0, 2000, 8);           // channel 0, 2 kHz base, 8-bit resolution
-    ledcAttachPin(PIN_BUZZER, 0);
-
     sensorPoller.begin();
     alertManager.begin();
     mqttTransceiver.begin(onPeerAlert);

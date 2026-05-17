@@ -11,6 +11,7 @@ import (
 	"p2pfault/backend/api"
 	"p2pfault/backend/db"
 	"p2pfault/backend/models"
+	"p2pfault/backend/registry"
 )
 
 // Subscriber connects to MQTT brokers, logs all events to SQLite, and
@@ -20,15 +21,17 @@ type Subscriber struct {
 	db      *db.DB
 	hub     *api.Hub
 	nodeID  string
+	tracker *registry.SBCTracker
 	client  paho.Client
 }
 
-func NewSubscriber(brokers []string, database *db.DB, hub *api.Hub, nodeID string) *Subscriber {
+func NewSubscriber(brokers []string, database *db.DB, hub *api.Hub, nodeID string, tracker *registry.SBCTracker) *Subscriber {
 	return &Subscriber{
 		brokers: brokers,
 		db:      database,
 		hub:     hub,
 		nodeID:  nodeID,
+		tracker: tracker,
 	}
 }
 
@@ -118,17 +121,30 @@ func (s *Subscriber) handleTelemetry(raw []byte) {
 		state = stateNames[t.State]
 	}
 
+	now := time.Now()
+
 	node := &models.NodeHealth{
 		NodeID:   t.NodeID,
 		ZoneID:   t.ZoneID,
-		LastSeen: time.Now(),
+		LastSeen: now,
 		GasVal:   t.GasVal,
 		State:    state,
 		Online:   true,
 	}
-
 	if err := s.db.UpsertNodeHealth(node); err != nil {
 		log.Printf("[DB] upsert node failed: %v", err)
+	}
+
+	tlog := &models.TelemetryLog{
+		Timestamp: now,
+		NodeID:    t.NodeID,
+		ZoneID:    t.ZoneID,
+		GasVal:    t.GasVal,
+		Flame:     t.Flame,
+		State:     state,
+	}
+	if err := s.db.InsertTelemetryLog(tlog); err != nil {
+		log.Printf("[DB] insert telemetry failed: %v", err)
 	}
 
 	s.broadcast("telemetry", node)
@@ -139,6 +155,7 @@ func (s *Subscriber) onHeartbeat(_ paho.Client, msg paho.Message) {
 	if err := json.Unmarshal(msg.Payload(), &hb); err != nil {
 		return
 	}
+	s.tracker.Heartbeat(hb.NodeID)
 	s.broadcast("sbc_heartbeat", hb)
 }
 
