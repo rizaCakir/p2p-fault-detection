@@ -100,12 +100,16 @@ In this project the alarm logic is distributed across the ESP32 nodes themselves
 p2p-fault-detection/
 ├── esp32-firmware/          # PlatformIO C++ firmware
 │   ├── platformio.ini
+│   ├── include/             # Header files (PlatformIO convention)
+│   │   ├── config.h             # Wi-Fi, MQTT, GPIO, threshold values
+│   │   ├── SensorPoller.h
+│   │   ├── AlertManager.h
+│   │   └── MqttTransceiver.h
 │   └── src/
-│       ├── config.h             # Wi-Fi, MQTT, GPIO, threshold values
 │       ├── main.cpp             # Arduino setup/loop, FSM coordination
-│       ├── SensorPoller.h/cpp   # ADC reading + sliding-window median filter
-│       ├── AlertManager.h/cpp   # FSM states + buzzer/LED control
-│       └── MqttTransceiver.h/cpp  # Wi-Fi + MQTT connection, exponential backoff
+│       ├── SensorPoller.cpp     # ADC reading + sliding-window median filter
+│       ├── AlertManager.cpp     # FSM states + buzzer/LED control
+│       └── MqttTransceiver.cpp  # Wi-Fi + MQTT connection, exponential backoff
 │
 ├── backend/                 # Go backend service
 │   ├── go.mod
@@ -122,18 +126,25 @@ p2p-fault-detection/
 │   └── registry/
 │       └── sbc.go           # In-memory SBC health tracker
 │
-└── dashboard/               # React + Vite frontend
-    ├── package.json
-    ├── vite.config.js
-    └── src/
-        ├── App.jsx                  # Root layout
-        ├── context/AppContext.jsx   # useReducer global state
-        ├── hooks/useWebSocket.js    # WS connection + exponential backoff
-        └── components/
-            ├── NodeCard.jsx     # Node status card (blinking on fault)
-            ├── AlertFeed.jsx    # Scrollable alert stream
-            ├── GasChart.jsx     # Recharts gas concentration trend
-            └── SBCStatus.jsx    # SBC cluster health widget
+├── dashboard/               # React + Vite frontend (dark theme)
+│   ├── package.json
+│   ├── vite.config.js
+│   └── src/
+│       ├── App.jsx                   # Root layout + useReducer state
+│       ├── hooks/useWebSocket.js     # WS connection + exponential backoff
+│       └── components/
+│           ├── NodeCard.jsx      # Node status card (blinking on fault)
+│           ├── SBCRow.jsx        # SBC cluster health row
+│           ├── AlertList.jsx     # Live alert feed with severity filter
+│           ├── GasChart.jsx      # Recharts gas concentration trend
+│           └── AlertHistory.jsx  # Paginated, filterable alert history table
+│
+└── sim/                     # Linux simulation environment
+    ├── docker-compose.yml   # Two Mosquitto broker containers (Podman)
+    ├── mosquitto/           # Broker configs (sbc1.conf, sbc2.conf)
+    ├── node_sim.py          # Interactive ESP32 simulator
+    ├── wifi_sim.sh          # tc netem WiFi impairment script
+    └── requirements.txt
 ```
 
 ---
@@ -169,7 +180,7 @@ IDLE ◄──── sensor readings safe ──── FAULT_DETECTED
 | `FAULT_DETECTED` | 1200 Hz | Blinking | Off | Publishes alert (retained) |
 | `PEER_ALARM_ACTIVE` | 600 Hz | Blinking | Off | — |
 
-> A local fault (`FAULT_DETECTED`) always takes priority over a peer alarm (`PEER_ALARM_ACTIVE`).
+> A local fault (`FAULT_DETECTED`) always takes priority over a peer alarm (`PEER_ALARM_ACTIVE`). Peer alarms auto-expire 30 seconds after the last received peer alert (`PEER_ALARM_TIMEOUT_MS`).
 
 ### Sensor Filter
 
@@ -248,13 +259,14 @@ The Hub broadcasts messages to all connected dashboard clients. Dead-connection 
 
 ### State Management
 
-`AppContext` (useReducer) global state shape:
+Global state is managed with a plain `useReducer` inside `App.jsx` — no separate context file.
 
 ```js
+// state shape
 {
-  nodes:        NodeHealth[],             // All known ESP32 nodes
-  activeAlerts: EventLog[],              // Last 100 alerts (newest first)
-  sbcStatus:    { [id]: SBCHeartbeat }  // Live SBC heartbeats
+  nodes:     NodeHealth[],            // All known ESP32 nodes
+  alerts:    EventLog[],             // Last 200 alerts (newest first)
+  sbcStatus: { [node_id]: SBC }     // Live SBC heartbeats
 }
 ```
 
@@ -262,14 +274,15 @@ The Hub broadcasts messages to all connected dashboard clients. Dead-connection 
 
 | Component | Description |
 |---|---|
-| `NodeCard` | Displays node ID, zone, state badge, gas ADC value, and online/offline status. Blinks at 600 ms on fault. |
-| `SBCStatus` | Gateway cluster cards. Turns red when no heartbeat has been received for 90 seconds. |
-| `GasChart` | Recharts `LineChart` with WARNING (1500) and CRITICAL (2500) reference lines. |
-| `AlertFeed` | Infinite-scroll alert list with icon and severity badge. |
+| `NodeCard` | Displays node ID, zone, state badge, gas ADC value, and online/offline status. Border and background blink at 600 ms on fault. |
+| `SBCRow` | Gateway cluster cards. Turns red when last heartbeat is older than 90 seconds. |
+| `AlertList` | Live alert feed with ALL / CRITICAL / WARNING filter buttons. |
+| `GasChart` | Recharts `LineChart` fed from `/api/v1/nodes/{id}/gas-history` with WARNING (1500) and CRITICAL (2500) reference lines. |
+| `AlertHistory` | Paginated table, filterable by node ID and severity, with previous/next pagination. |
 
 ### WebSocket Reconnection
 
-The `useWebSocket` hook reconnects automatically on disconnect using **exponential backoff** (1 s → 30 s).
+The `useWebSocket` hook reconnects automatically on disconnect using **exponential backoff** (1 s → 2 s → 4 s → … → 30 s ceiling).
 
 ---
 
@@ -465,14 +478,135 @@ All messages follow the envelope `{"type": "...", "payload": {...}}`.
 
 ### Prerequisites
 
-| Component | Requirement |
-|---|---|
-| ESP32 Firmware | [PlatformIO](https://platformio.org/) CLI or VSCode extension |
-| Go Backend | Go 1.21+, `gcc` (required by go-sqlite3 cgo) |
-| React Dashboard | Node.js 18+, npm |
-| MQTT Broker | Mosquitto (`apt install mosquitto`) |
+| Tool | Purpose |
+|------|---------|
+| [PlatformIO CLI](https://docs.platformio.org/en/latest/core/installation/) | Build & flash ESP32 firmware |
+| [Podman](https://podman.io/docs/installation) + [podman-compose](https://github.com/containers/podman-compose) | Run simulated MQTT brokers |
+| Python ≥ 3.11 | Node simulator |
+| Go ≥ 1.21 + `gcc` | Backend (go-sqlite3 requires cgo) |
+| Node.js ≥ 18 | Dashboard |
 
 ---
+
+## Option A — Linux Simulation (no hardware needed)
+
+Runs multiple simulated ESP32 nodes and two Mosquitto broker containers on your machine. Tests P2P alerting, broker failover, and WiFi impairment with real TCP/IP.
+
+### 1. Start the broker cluster
+
+```bash
+cd sim
+podman compose up -d
+```
+
+| Container | Simulates | Host port |
+|-----------|-----------|-----------|
+| `mqtt-sbc1` | Raspberry Pi SBC-1 | `1883` |
+| `mqtt-sbc2` | Raspberry Pi SBC-2 | `1884` |
+
+### 2. Set up the Python environment
+
+```bash
+cd sim
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
+
+### 3. Launch nodes (one terminal each)
+
+```bash
+# Terminal 1 — esp_01, zone1, primary broker = SBC-1
+.venv/bin/python node_sim.py --node-id esp_01 --zone zone1 \
+    --primary localhost --port 1883 \
+    --secondary localhost --secondary-port 1884
+
+# Terminal 2 — esp_02, zone1, primary broker = SBC-2
+.venv/bin/python node_sim.py --node-id esp_02 --zone zone1 \
+    --primary localhost --port 1884 \
+    --secondary localhost --secondary-port 1883
+
+# Terminal 3 — esp_03, zone2 (different zone — will not receive zone1 alerts)
+.venv/bin/python node_sim.py --node-id esp_03 --zone zone2 \
+    --primary localhost --port 1883 \
+    --secondary localhost --secondary-port 1884
+```
+
+> **Rootful Podman:** if running as root, the bridge IPs are routable directly — use `--primary 192.168.1.100 --secondary 192.168.1.101` and omit the port flags.
+
+### 4. Demo scenarios
+
+Type commands into each node terminal and press Enter.
+
+#### Scenario 1 — P2P alert propagation
+
+In **Terminal 1** (`esp_01`): `gas_critical`
+- `esp_01` → `IDLE → FAULT_DETECTED`, publishes **one** retained alert
+- `esp_02` → `PEER_ALARM_ACTIVE`
+- `esp_03` → **no reaction** (different zone)
+
+Then `clear` → `esp_01` returns to IDLE; `esp_02` auto-expires after 30 s.
+
+#### Scenario 2 — Local fault priority
+
+In `esp_02`: `flame` (local fault).  
+Then in `esp_01`: `gas_warning` (peer alert toward `esp_02`).  
+`esp_02` ignores the peer alert — local fault always wins.
+
+#### Scenario 3 — Broker failover
+
+```bash
+podman compose stop sbc1   # kill primary broker
+```
+After 3 failed attempts, `esp_01` switches to SBC-2 automatically.  
+```bash
+podman compose start sbc1  # restore
+```
+
+#### Scenario 4 — WiFi impairment
+
+```bash
+# Apply tc netem inside broker containers (rootless Podman)
+podman exec mqtt-sbc1 apk add --no-cache iproute2
+podman exec mqtt-sbc2 apk add --no-cache iproute2
+
+./wifi_sim.sh --inside add 120 5    # 120 ms delay, 5% loss (congested)
+./wifi_sim.sh preset poor           # 200 ms / 15% loss (edge of coverage)
+./wifi_sim.sh --inside status       # show current impairment
+./wifi_sim.sh --inside remove       # restore clean network
+```
+
+### 5. Start the backend and dashboard
+
+```bash
+# Terminal 4 — Go backend (points at simulated brokers)
+cd backend
+go build -o p2pfault .
+MQTT_BROKER_1=tcp://localhost:1883 \
+MQTT_BROKER_2=tcp://localhost:1884 \
+SBC_NODE_ID=sbc-1 \
+LISTEN_ADDR=:8080 \
+DB_PATH=./data/events.db \
+./p2pfault
+```
+
+```bash
+# Terminal 5 — Dashboard (Vite dev server on :3000)
+cd dashboard
+npm install
+npm run dev
+```
+
+Open `http://localhost:3000`.
+
+### 6. Stop the simulation
+
+```bash
+cd sim && podman compose down
+```
+
+---
+
+## Option B — Real Hardware Deployment
 
 ### Step 1 — MQTT Broker (on each Raspberry Pi)
 
@@ -481,7 +615,7 @@ sudo apt install mosquitto mosquitto-clients
 sudo systemctl enable --now mosquitto
 ```
 
-Mosquitto configuration (`/etc/mosquitto/mosquitto.conf`):
+`/etc/mosquitto/mosquitto.conf`:
 ```
 listener 1883
 allow_anonymous true
@@ -491,11 +625,7 @@ allow_anonymous true
 
 ### Step 2 — ESP32 Firmware
 
-```bash
-cd esp32-firmware
-```
-
-Edit `src/config.h`:
+Edit `esp32-firmware/include/config.h`:
 
 ```c
 #define WIFI_SSID     "YourNetworkName"
@@ -510,6 +640,7 @@ Edit `src/config.h`:
 
 Build and flash:
 ```bash
+cd esp32-firmware
 pio run --target upload
 pio device monitor   # serial monitor at 115200 baud
 ```
@@ -520,39 +651,37 @@ pio device monitor   # serial monitor at 115200 baud
 
 ```bash
 cd backend
-go build -o p2p-backend .
+go build -o p2pfault .
 ```
 
-Run with environment variables:
-
 ```bash
-# On SBC-1
+# SBC-1
 MQTT_BROKER_1=tcp://192.168.1.100:1883 \
 MQTT_BROKER_2=tcp://192.168.1.101:1883 \
 SBC_NODE_ID=sbc-1 \
 LISTEN_ADDR=:8080 \
 DB_PATH=./data/events.db \
-./p2p-backend
+./p2pfault
 
-# On SBC-2 (separate terminal or systemd unit)
+# SBC-2
 MQTT_BROKER_1=tcp://192.168.1.100:1883 \
 MQTT_BROKER_2=tcp://192.168.1.101:1883 \
 SBC_NODE_ID=sbc-2 \
 LISTEN_ADDR=:8080 \
 DB_PATH=./data/events.db \
-./p2p-backend
+./p2pfault
 ```
 
-#### As a systemd Service (Recommended)
+#### As a systemd Service
 
 ```ini
-# /etc/systemd/system/p2p-backend.service
+# /etc/systemd/system/p2pfault.service
 [Unit]
 Description=P2P Fault Detection Backend
 After=network.target mosquitto.service
 
 [Service]
-ExecStart=/home/pi/p2p-backend
+ExecStart=/home/pi/p2pfault
 WorkingDirectory=/home/pi
 Environment=MQTT_BROKER_1=tcp://192.168.1.100:1883
 Environment=MQTT_BROKER_2=tcp://192.168.1.101:1883
@@ -567,7 +696,7 @@ WantedBy=multi-user.target
 ```
 
 ```bash
-sudo systemctl enable --now p2p-backend
+sudo systemctl enable --now p2pfault
 ```
 
 ---
@@ -577,26 +706,17 @@ sudo systemctl enable --now p2p-backend
 ```bash
 cd dashboard
 npm install
+npm run dev      # development server on :3000
+npm run build    # production build → dist/
 ```
 
-Development server (with API proxy):
-```bash
-npm run dev
-```
-
-> Set the SBC IP in `vite.config.js` so that `/api/v1` and `/ws` requests are proxied to `http://192.168.1.100:8080`.
-
-Production build:
-```bash
-npm run build   # outputs to dist/
-# copy dist/ to the SBC's web server (nginx / caddy)
-```
+For production, copy `dist/` to the SBC and serve with nginx or any static file server. Update `vite.config.js` proxy target to the SBC's IP before building.
 
 ---
 
 ## 11. Configuration Reference
 
-### ESP32 (`esp32-firmware/src/config.h`)
+### ESP32 (`esp32-firmware/include/config.h`)
 
 | Constant | Default | Description |
 |---|---|---|
@@ -614,6 +734,8 @@ npm run build   # outputs to dist/
 | `TELEMETRY_INTERVAL_MS` | `5000` | Telemetry publish period (ms) |
 | `RECONNECT_BASE_DELAY_MS` | `1000` | Initial reconnection delay (ms) |
 | `RECONNECT_MAX_DELAY_MS` | `30000` | Maximum reconnection delay (ms) |
+| `WIFI_RETRY_INTERVAL_MS` | `5000` | Non-blocking WiFi retry cadence (ms) |
+| `PEER_ALARM_TIMEOUT_MS` | `30000` | Auto-clear peer alarm if no repeat within this window (ms) |
 | `FILTER_WINDOW_SIZE` | `7` | Median filter window size |
 
 ### Go Backend (Environment Variables)
@@ -637,4 +759,4 @@ npm run build   # outputs to dist/
 | Go backend unit tests | Not started | Target ≥ 80% coverage for `db/` and `mqtt/` packages |
 | 48-hour stress test | Not started | Verify zero QoS 1 message drops across 6 ESP32 nodes |
 | NTP time synchronization | Missing | ESP32 `timestamp` field currently uses `millis()`; SNTP needed for real epoch time |
-| Dashboard gas-history endpoint integration | Partial | `GasChart` currently uses `event_log` data; should be fed from the new `/gas-history` endpoint |
+| Dashboard gas-history endpoint integration | Done | `GasChart` fetches from `/api/v1/nodes/{id}/gas-history` |
