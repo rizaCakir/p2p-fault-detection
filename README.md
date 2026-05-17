@@ -8,6 +8,7 @@ A decentralized IoT monitoring and alarm system for industrial environments that
 
 ## Table of Contents
 
+- [**Demo**](#demo) ← start here for the presentation
 1. [System Architecture](#1-system-architecture)
 2. [Hardware Components](#2-hardware-components)
 3. [Project Directory Structure](#3-project-directory-structure)
@@ -20,6 +21,150 @@ A decentralized IoT monitoring and alarm system for industrial environments that
 10. [Setup and Running](#10-setup-and-running)
 11. [Configuration Reference](#11-configuration-reference)
 12. [Known Gaps and Next Steps](#12-known-gaps-and-next-steps)
+
+---
+
+## Demo
+
+Full end-to-end demo on a single Linux machine — no ESP32 hardware needed.
+
+Open **six terminals** in the project root before you start.
+
+### Terminal 1 — MQTT broker cluster
+
+```bash
+cd sim
+podman compose up
+```
+
+Wait until both containers print `mosquitto version 2.x.x running`.
+
+### Terminal 2 — Go backend
+
+```bash
+cd backend
+go build -o p2pfault .
+mkdir -p data
+MQTT_BROKER_1=tcp://localhost:1883 \
+MQTT_BROKER_2=tcp://localhost:1884 \
+SBC_NODE_ID=sbc-demo \
+LISTEN_ADDR=:8080 \
+DB_PATH=./data/events.db \
+./p2pfault
+```
+
+### Terminal 3 — React dashboard
+
+```bash
+cd dashboard
+npm install          # first time only
+npm run dev
+```
+
+Open **http://localhost:3000** in a browser. The dashboard shows `reconnecting…` until at least one node comes online.
+
+### Terminals 4–6 — simulated ESP32 nodes
+
+```bash
+# First time only (inside sim/)
+cd sim && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+```
+
+```bash
+# Terminal 4 — esp_01, zone1
+cd sim && .venv/bin/python node_sim.py --node-id esp_01 --zone zone1 \
+    --primary localhost --port 1883 --secondary localhost --secondary-port 1884
+
+# Terminal 5 — esp_02, zone1 (same zone, different broker)
+cd sim && .venv/bin/python node_sim.py --node-id esp_02 --zone zone1 \
+    --primary localhost --port 1884 --secondary localhost --secondary-port 1883
+
+# Terminal 6 — esp_03, zone2 (different zone)
+cd sim && .venv/bin/python node_sim.py --node-id esp_03 --zone zone2 \
+    --primary localhost --port 1883 --secondary localhost --secondary-port 1884
+```
+
+The dashboard now shows three nodes as **online / NORMAL**.
+
+---
+
+### Demo scenario 1 — P2P alert propagation
+
+In **Terminal 4** (`esp_01`), type and press Enter:
+```
+gas_critical
+```
+
+**What to show on the dashboard:**
+- `esp_01` card turns red and blinks → `FAULT`
+- `esp_02` card turns orange → `PEER ALARM` (received alert over MQTT without any central server)
+- `esp_03` card stays green → unaffected (different zone)
+- Critical alert count increments in the stat bar
+- New entry appears at the top of the live alert feed
+
+Then clear:
+```
+clear
+```
+- `esp_01` returns to `NORMAL`
+- `esp_02` remains `PEER ALARM` and auto-clears after 30 s
+
+---
+
+### Demo scenario 2 — Local fault blocks peer alarm
+
+In **Terminal 5** (`esp_02`):
+```
+flame
+```
+Then immediately in **Terminal 4** (`esp_01`):
+```
+gas_warning
+```
+
+**What to show:** `esp_02` stays in `FAULT` (flame) — it ignores the peer gas warning. Local fault always has priority.
+
+---
+
+### Demo scenario 3 — Broker failover
+
+Kill SBC-1 while `esp_01` is connected to it:
+```bash
+podman compose stop sbc1
+```
+
+Watch **Terminal 4**: after 3 failed reconnect attempts (~3 s), `esp_01` switches to SBC-2 automatically and reconnects. No data loss. Restore:
+```bash
+podman compose start sbc1
+```
+
+---
+
+### Demo scenario 4 — WiFi impairment
+
+Install `iproute2` inside the containers (one-time):
+```bash
+podman exec mqtt-sbc1 apk add --no-cache iproute2
+podman exec mqtt-sbc2 apk add --no-cache iproute2
+```
+
+Apply poor WiFi conditions:
+```bash
+cd sim && ./wifi_sim.sh --inside add 200 15   # 200 ms delay, 15% packet loss
+```
+
+Trigger an alert from `esp_01` and observe delayed delivery on `esp_02`. Restore:
+```bash
+./wifi_sim.sh --inside remove
+```
+
+---
+
+### Tear down
+
+```bash
+cd sim && podman compose down
+```
 
 ---
 
