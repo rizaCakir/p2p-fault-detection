@@ -3,13 +3,14 @@ import { createContext, useContext, useReducer } from 'react'
 const AppContext = createContext(null)
 
 const initialState = {
-  nodes:        [],   // NodeHealth[]
-  activeAlerts: [],   // EventLog[]  (last 100)
-  sbcStatus:    {},   // { [nodeId]: SBCHeartbeat }
+  nodes:        [],  // NodeHealth[]
+  activeAlerts: [],  // EventLog[]  – last 100, newest first
+  sbcStatus:    {},  // { [nodeId]: { node_id, timestamp, online } }
 }
 
 function reducer(state, action) {
   switch (action.type) {
+
     case 'SET_NODES':
       return { ...state, nodes: action.payload }
 
@@ -27,8 +28,21 @@ function reducer(state, action) {
     case 'ADD_ALERT':
       return { ...state, activeAlerts: [action.payload, ...state.activeAlerts].slice(0, 100) }
 
+    // Called from initial /api/v1/sbc/status fetch (fields: node_id, last_seen, online)
+    case 'SET_SBC_STATUSES': {
+      const merged = { ...state.sbcStatus }
+      for (const sbc of action.payload) {
+        merged[sbc.node_id] = { ...sbc, timestamp: sbc.last_seen ?? sbc.timestamp }
+      }
+      return { ...state, sbcStatus: merged }
+    }
+
+    // Called from WebSocket sbc_heartbeat messages (fields: node_id, timestamp, online)
     case 'UPDATE_SBC':
-      return { ...state, sbcStatus: { ...state.sbcStatus, [action.payload.node_id]: action.payload } }
+      return {
+        ...state,
+        sbcStatus: { ...state.sbcStatus, [action.payload.node_id]: action.payload },
+      }
 
     default:
       return state

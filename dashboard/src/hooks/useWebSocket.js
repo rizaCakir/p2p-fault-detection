@@ -1,14 +1,16 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 /**
  * Connects to a WebSocket URL and calls onMessage with each parsed JSON object.
- * Automatically reconnects with exponential backoff (1s → 30s) on disconnect.
+ * Automatically reconnects with exponential backoff (1 s → 30 s) on disconnect.
+ * Returns the current connection status as a boolean.
  */
 export function useWebSocket(url, onMessage) {
+  const [connected, setConnected] = useState(false)
   const wsRef    = useRef(null)
   const delayRef = useRef(1000)
   const cbRef    = useRef(onMessage)
-  cbRef.current  = onMessage  // keep latest callback without re-running effect
+  cbRef.current  = onMessage
 
   useEffect(() => {
     let timeout
@@ -20,7 +22,8 @@ export function useWebSocket(url, onMessage) {
       wsRef.current = ws
 
       ws.onopen = () => {
-        delayRef.current = 1000  // reset backoff on successful connect
+        setConnected(true)
+        delayRef.current = 1000
       }
 
       ws.onmessage = ({ data }) => {
@@ -28,6 +31,7 @@ export function useWebSocket(url, onMessage) {
       }
 
       ws.onclose = () => {
+        setConnected(false)
         if (!active) return
         timeout = setTimeout(() => {
           delayRef.current = Math.min(delayRef.current * 2, 30_000)
@@ -43,4 +47,6 @@ export function useWebSocket(url, onMessage) {
       wsRef.current?.close()
     }
   }, [url])
+
+  return connected
 }
