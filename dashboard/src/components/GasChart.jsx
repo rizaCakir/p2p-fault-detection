@@ -4,79 +4,52 @@ import {
   Tooltip, ReferenceLine, ResponsiveContainer,
 } from 'recharts'
 
-const GAS_WARN = 1500
-const GAS_CRIT = 2500
-const POLL_MS  = 10_000
-
-function fetchHistory(nodeId) {
-  return fetch(`/api/v1/nodes/${encodeURIComponent(nodeId)}/gas-history?limit=60`)
-    .then(r => r.ok ? r.json() : [])
-    .then(logs =>
-      // API returns newest-first; reverse so chart reads left → right
-      [...logs].reverse().map(l => ({
-        t:   new Date(l.timestamp).toLocaleTimeString(),
-        val: l.gas_val,
-      }))
-    )
-}
+const API = '/api/v1'
 
 export default function GasChart({ nodeId }) {
-  const [data,    setData]    = useState([])
-  const [loading, setLoading] = useState(true)
+  const [data, setData] = useState([])
 
   useEffect(() => {
-    let cancelled = false
-
-    function load() {
-      fetchHistory(nodeId)
-        .then(rows => { if (!cancelled) { setData(rows); setLoading(false) } })
-        .catch(()  => { if (!cancelled) setLoading(false) })
-    }
-
-    setLoading(true)
-    load()
-    const id = setInterval(load, POLL_MS)
-    return () => { cancelled = true; clearInterval(id) }
+    if (!nodeId) return
+    fetch(`${API}/nodes/${nodeId}/gas-history?limit=60`)
+      .then(r => r.ok ? r.json() : [])
+      .then(rows => setData(rows.map(r => ({
+        t:   new Date(r.timestamp).toLocaleTimeString(),
+        gas: r.gas_val,
+      }))))
+      .catch(() => {})
   }, [nodeId])
 
-  if (loading) return <p className="gas-loading">Loading gas history…</p>
-  if (data.length === 0) return <p className="gas-loading">No gas data for {nodeId} yet.</p>
+  if (!nodeId) return null
 
   return (
-    <div>
-      <div className="gas-chart-title">Gas Concentration — {nodeId}</div>
-      <ResponsiveContainer width="100%" height={200}>
-        <LineChart data={data} margin={{ top: 4, right: 16, bottom: 0, left: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-          <XAxis
-            dataKey="t"
-            tick={{ fontSize: 10, fill: 'var(--text-3)' }}
-            interval="preserveStartEnd"
-          />
-          <YAxis
-            domain={[0, 4095]}
-            tick={{ fontSize: 10, fill: 'var(--text-3)' }}
-            width={38}
-          />
-          <Tooltip
-            formatter={v => [v, 'ADC value']}
-            contentStyle={{ fontSize: 12, borderColor: 'var(--border)' }}
-          />
-          <ReferenceLine
-            y={GAS_WARN} stroke="var(--orange)" strokeDasharray="5 3"
-            label={{ value: 'WARN', position: 'insideTopRight', fontSize: 10, fill: 'var(--orange)' }}
-          />
-          <ReferenceLine
-            y={GAS_CRIT} stroke="var(--red)" strokeDasharray="5 3"
-            label={{ value: 'CRIT', position: 'insideTopRight', fontSize: 10, fill: 'var(--red)' }}
-          />
-          <Line
-            type="monotone" dataKey="val" name="Gas (ADC)"
-            stroke="var(--blue)" strokeWidth={2}
-            dot={false} activeDot={{ r: 4 }}
-          />
-        </LineChart>
-      </ResponsiveContainer>
-    </div>
+    <>
+      <div className="chart-node">{nodeId} — gas ADC</div>
+      {data.length === 0
+        ? <div className="chart-loading">loading…</div>
+        : (
+          <ResponsiveContainer width="100%" height={180}>
+            <LineChart data={data} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#30363d" />
+              <XAxis dataKey="t" tick={{ fontSize: 9, fill: '#8b949e' }} interval="preserveStartEnd" />
+              <YAxis domain={[0, 4095]} tick={{ fontSize: 9, fill: '#8b949e' }} />
+              <Tooltip
+                contentStyle={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 6 }}
+                labelStyle={{ color: '#8b949e', fontSize: 11 }}
+                itemStyle={{ color: '#58a6ff', fontSize: 11 }}
+              />
+              <ReferenceLine y={2500} stroke="#f85149" strokeDasharray="4 3"
+                label={{ value: 'CRITICAL', position: 'right', fontSize: 9, fill: '#f85149' }} />
+              <ReferenceLine y={1500} stroke="#d29922" strokeDasharray="4 3"
+                label={{ value: 'WARNING', position: 'right', fontSize: 9, fill: '#d29922' }} />
+              <Line
+                type="monotone" dataKey="gas" stroke="#58a6ff"
+                dot={false} strokeWidth={1.5} isAnimationActive={false}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        )
+      }
+    </>
   )
 }

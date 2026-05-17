@@ -1,122 +1,94 @@
 import { useEffect, useState } from 'react'
 
-const PAGE_SIZE = 20
-
-const SEV_COLOR = {
-  CRITICAL: 'var(--red)',
-  WARNING:  'var(--orange)',
-}
+const API = '/api/v1'
+const PAGE = 20
 
 export default function AlertHistory() {
-  const [alerts,       setAlerts]       = useState([])
-  const [total,        setTotal]        = useState(0)
-  const [page,         setPage]         = useState(0)
-  const [severity,     setSeverity]     = useState('')
-  const [nodeIdInput,  setNodeIdInput]  = useState('')
-  const [nodeId,       setNodeId]       = useState('')   // debounced
-  const [loading,      setLoading]      = useState(true)
+  const [rows, setRows]       = useState([])
+  const [total, setTotal]     = useState(0)
+  const [page, setPage]       = useState(0)
+  const [nodeId, setNodeId]   = useState('')
+  const [severity, setSev]    = useState('')
 
-  // Debounce the node ID text input by 400 ms
   useEffect(() => {
-    const t = setTimeout(() => { setNodeId(nodeIdInput.trim()); setPage(0) }, 400)
-    return () => clearTimeout(t)
-  }, [nodeIdInput])
-
-  // Fetch whenever page, severity, or nodeId (debounced) changes
-  useEffect(() => {
-    setLoading(true)
-    const params = new URLSearchParams({ limit: PAGE_SIZE, offset: page * PAGE_SIZE })
-    if (severity) params.set('severity', severity)
-    if (nodeId)   params.set('node_id',  nodeId)
-
-    fetch(`/api/v1/alerts/history?${params}`)
+    const params = new URLSearchParams({
+      limit:  PAGE,
+      offset: page * PAGE,
+      ...(nodeId   ? { node_id:  nodeId }   : {}),
+      ...(severity ? { severity: severity } : {}),
+    })
+    fetch(`${API}/alerts/history?${params}`)
       .then(r => r.ok ? r.json() : { data: [], total: 0 })
-      .then(body => { setAlerts(body.data ?? []); setTotal(body.total ?? 0) })
+      .then(body => { setRows(body.data ?? []); setTotal(body.total ?? 0) })
       .catch(() => {})
-      .finally(() => setLoading(false))
-  }, [page, severity, nodeId])
+  }, [page, nodeId, severity])
 
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
-
-  function onSeverityChange(e) {
-    setSeverity(e.target.value)
-    setPage(0)
-  }
+  const pages = Math.ceil(total / PAGE)
 
   return (
-    <div>
-      {/* Controls */}
-      <div className="history-controls">
+    <>
+      <div className="hist-filters">
         <input
-          className="history-input"
-          placeholder="Filter by node ID…"
-          value={nodeIdInput}
-          onChange={e => setNodeIdInput(e.target.value)}
-          style={{ minWidth: 170 }}
+          className="hist-input" placeholder="node id…" value={nodeId}
+          onChange={e => { setNodeId(e.target.value); setPage(0) }}
+          style={{ width: 110 }}
         />
-        <select className="history-input" value={severity} onChange={onSeverityChange}>
-          <option value="">All severities</option>
-          <option value="WARNING">WARNING</option>
+        <select
+          className="hist-select" value={severity}
+          onChange={e => { setSev(e.target.value); setPage(0) }}
+        >
+          <option value="">all severity</option>
           <option value="CRITICAL">CRITICAL</option>
+          <option value="WARNING">WARNING</option>
         </select>
-        <span className="page-info" style={{ marginLeft: 'auto' }}>
-          {total.toLocaleString()} event{total !== 1 ? 's' : ''}
+        <span style={{ marginLeft: 'auto', color: 'var(--text-3)', fontSize: 11, fontFamily: 'system-ui' }}>
+          {total} total
         </span>
       </div>
 
-      {/* Table */}
-      {loading ? (
-        <p className="gas-loading">Loading…</p>
-      ) : alerts.length === 0 ? (
-        <p className="history-empty">No events match the current filters.</p>
-      ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table className="history-table">
+      {rows.length === 0
+        ? <div className="hist-empty">no records</div>
+        : (
+          <table className="hist-table">
             <thead>
               <tr>
-                <th>Time</th>
                 <th>Node</th>
                 <th>Zone</th>
                 <th>Type</th>
                 <th>Severity</th>
                 <th>Value</th>
+                <th>Time</th>
               </tr>
             </thead>
             <tbody>
-              {alerts.map(a => (
-                <tr key={a.event_id}>
-                  <td style={{ color: 'var(--text-2)', fontSize: 12, whiteSpace: 'nowrap' }}>
-                    {new Date(a.timestamp).toLocaleString()}
+              {rows.map(r => (
+                <tr key={r.event_id}>
+                  <td>{r.node_id}</td>
+                  <td>{r.zone_id}</td>
+                  <td>{r.fault_type}</td>
+                  <td style={{ color: r.severity === 'CRITICAL' ? 'var(--red)' : 'var(--orange)' }}>
+                    {r.severity}
                   </td>
-                  <td style={{ fontWeight: 600 }}>{a.node_id}</td>
-                  <td style={{ color: 'var(--text-2)' }}>{a.zone_id}</td>
-                  <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{a.fault_type}</td>
-                  <td>
-                    <span
-                      className="alert-severity"
-                      style={{ background: SEV_COLOR[a.severity] ?? 'var(--text-3)' }}
-                    >
-                      {a.severity}
-                    </span>
-                  </td>
-                  <td style={{ fontWeight: 600 }}>{a.value}</td>
+                  <td>{r.value}</td>
+                  <td>{new Date(r.timestamp).toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
-      )}
+        )
+      }
 
-      {/* Pagination */}
-      {totalPages > 1 && (
+      {pages > 1 && (
         <div className="pagination">
-          <button className="page-btn" onClick={() => setPage(0)}              disabled={page === 0}>«</button>
-          <button className="page-btn" onClick={() => setPage(p => p - 1)}    disabled={page === 0}>‹</button>
-          <span className="page-info">Page {page + 1} of {totalPages}</span>
-          <button className="page-btn" onClick={() => setPage(p => p + 1)}    disabled={page >= totalPages - 1}>›</button>
-          <button className="page-btn" onClick={() => setPage(totalPages - 1)} disabled={page >= totalPages - 1}>»</button>
+          <button className="page-btn" disabled={page === 0} onClick={() => setPage(p => p - 1)}>
+            ‹ prev
+          </button>
+          <span className="page-info">{page + 1} / {pages}</span>
+          <button className="page-btn" disabled={page >= pages - 1} onClick={() => setPage(p => p + 1)}>
+            next ›
+          </button>
         </div>
       )}
-    </div>
+    </>
   )
 }

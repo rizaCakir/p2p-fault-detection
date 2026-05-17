@@ -1,49 +1,45 @@
 import { useEffect, useRef, useState } from 'react'
 
-/**
- * Connects to a WebSocket URL and calls onMessage with each parsed JSON object.
- * Automatically reconnects with exponential backoff (1 s → 30 s) on disconnect.
- * Returns the current connection status as a boolean.
- */
+const BACKOFF = [1000, 2000, 4000, 8000, 16000, 30000]
+
 export function useWebSocket(url, onMessage) {
   const [connected, setConnected] = useState(false)
   const wsRef    = useRef(null)
-  const delayRef = useRef(1000)
+  const attempt  = useRef(0)
+  const timerRef = useRef(null)
   const cbRef    = useRef(onMessage)
   cbRef.current  = onMessage
 
   useEffect(() => {
-    let timeout
-    let active = true
+    let dead = false
 
     function connect() {
-      if (!active) return
       const ws = new WebSocket(url)
       wsRef.current = ws
 
       ws.onopen = () => {
+        if (dead) { ws.close(); return }
         setConnected(true)
-        delayRef.current = 1000
+        attempt.current = 0
       }
 
-      ws.onmessage = ({ data }) => {
-        try { cbRef.current(JSON.parse(data)) } catch (_) {}
+      ws.onmessage = e => {
+        try { cbRef.current(JSON.parse(e.data)) } catch {}
       }
 
-      ws.onclose = () => {
+      ws.onclose = ws.onerror = () => {
+        if (dead) return
         setConnected(false)
-        if (!active) return
-        timeout = setTimeout(() => {
-          delayRef.current = Math.min(delayRef.current * 2, 30_000)
-          connect()
-        }, delayRef.current)
+        const delay = BACKOFF[Math.min(attempt.current++, BACKOFF.length - 1)]
+        timerRef.current = setTimeout(connect, delay)
       }
     }
 
     connect()
+
     return () => {
-      active = false
-      clearTimeout(timeout)
+      dead = true
+      clearTimeout(timerRef.current)
       wsRef.current?.close()
     }
   }, [url])
