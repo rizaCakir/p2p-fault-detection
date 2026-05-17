@@ -1,0 +1,53 @@
+version: "3.8"
+
+# Simulates the two Raspberry Pi SBC MQTT brokers on a dedicated Podman
+# bridge network — IPs match firmware config.h exactly (192.168.1.100/101).
+#
+# On Linux (rootful Podman) bridge IPs are routable from the host, so
+# node_sim.py can reach 192.168.1.100:1883 just like a real ESP32 would.
+# With rootless Podman use the port mappings (localhost:1883 / localhost:1884).
+#
+# NOTE: if your LAN is already on 192.168.1.0/24, Podman will refuse the
+# overlapping subnet. Change `subnet` and the two `ipv4_address` values to
+# e.g. 10.200.1.0/24 / .100 / .101 and update node_sim.py --primary/--secondary.
+#
+# Usage:
+#   podman compose up -d          # start brokers
+#   podman compose down           # stop and remove containers
+#   podman compose stop sbc1      # kill primary broker to test failover
+
+networks:
+  facility_lan:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 192.168.1.0/24
+
+services:
+  sbc1:
+    image: eclipse-mosquitto:2
+    container_name: mqtt-sbc1
+    networks:
+      facility_lan:
+        ipv4_address: 192.168.1.100
+    # Port mapping kept as fallback in case direct bridge routing is blocked
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/sbc1.conf:/mosquitto/config/mosquitto.conf:ro
+    cap_add:
+      - NET_ADMIN   # lets wifi_sim.sh apply tc inside the container if needed
+
+  sbc2:
+    image: eclipse-mosquitto:2
+    container_name: mqtt-sbc2
+    networks:
+      facility_lan:
+        ipv4_address: 192.168.1.101
+    ports:
+      - "1884:1883"
+    volumes:
+      - ./mosquitto/sbc2.conf:/mosquitto/config/mosquitto.conf:ro
+    cap_add:
+      - NET_ADMIN

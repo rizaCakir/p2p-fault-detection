@@ -87,17 +87,20 @@ void loop() {
         NodeState prevState = alertManager.getState();
 
         if (flame) {
-            if (prevState != NodeState::FAULT_DETECTED || alertManager.getCurrentFault() != FaultType::FLAME)
+            if (prevState != NodeState::FAULT_DETECTED || alertManager.getCurrentFault() != FaultType::FLAME) {
                 alertManager.onLocalFault(FaultType::FLAME);
-            publishAlert(FaultType::FLAME, 1);
+                publishAlert(FaultType::FLAME, 1);
+            }
         } else if (sensorPoller.isGasCritical()) {
-            if (prevState != NodeState::FAULT_DETECTED || alertManager.getCurrentFault() != FaultType::GAS_CRITICAL)
+            if (prevState != NodeState::FAULT_DETECTED || alertManager.getCurrentFault() != FaultType::GAS_CRITICAL) {
                 alertManager.onLocalFault(FaultType::GAS_CRITICAL);
-            publishAlert(FaultType::GAS_CRITICAL, gasVal);
+                publishAlert(FaultType::GAS_CRITICAL, gasVal);
+            }
         } else if (sensorPoller.isGasWarning()) {
-            if (prevState != NodeState::FAULT_DETECTED || alertManager.getCurrentFault() != FaultType::GAS_WARNING)
+            if (prevState != NodeState::FAULT_DETECTED || alertManager.getCurrentFault() != FaultType::GAS_WARNING) {
                 alertManager.onLocalFault(FaultType::GAS_WARNING);
-            publishAlert(FaultType::GAS_WARNING, gasVal);
+                publishAlert(FaultType::GAS_WARNING, gasVal);
+            }
         } else {
             // Sensor readings are safe
             if (prevState == NodeState::FAULT_DETECTED) {

@@ -6,7 +6,8 @@ MqttTransceiver::MqttTransceiver()
     : _alertCb(nullptr), _usePrimary(true),
       _lastReconnectAt(0),
       _reconnectDelay(RECONNECT_BASE_DELAY_MS),
-      _failedAttempts(0)
+      _failedAttempts(0),
+      _lastWifiRetryAt(0)
 {
     _instance = this;
 }
@@ -69,7 +70,14 @@ void MqttTransceiver::switchBroker() {
 
 void MqttTransceiver::update() {
     if (WiFi.status() != WL_CONNECTED) {
-        connectWiFi();
+        // Non-blocking retry: kick WiFi.begin() periodically and return immediately
+        // so sensors and local alarms keep running while we wait for reconnection.
+        unsigned long now = millis();
+        if (now - _lastWifiRetryAt >= WIFI_RETRY_INTERVAL_MS) {
+            _lastWifiRetryAt = now;
+            Serial.println("[WiFi] disconnected – retrying...");
+            WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+        }
         return;
     }
 

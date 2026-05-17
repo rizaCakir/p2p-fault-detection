@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p /home/orhun/Projects/p2p-fault-detection/esp32-firmware/include)",
+      "Bash(mv /home/orhun/Projects/p2p-fault-detection/esp32-firmware/src/config.h /home/orhun/Projects/p2p-fault-detection/esp32-firmware/include/)",
+      "Bash(mv /home/orhun/Projects/p2p-fault-detection/esp32-firmware/src/AlertManager.h /home/orhun/Projects/p2p-fault-detection/esp32-firmware/include/)",
+      "Bash(mv /home/orhun/Projects/p2p-fault-detection/esp32-firmware/src/MqttTransceiver.h /home/orhun/Projects/p2p-fault-detection/esp32-firmware/include/)",
+      "Bash(mv /home/orhun/Projects/p2p-fault-detection/esp32-firmware/src/SensorPoller.h /home/orhun/Projects/p2p-fault-detection/esp32-firmware/include/)",
+      "Bash(find ~/.platformio/packages/framework-arduinoespressif32 -name \"Arduino.h\" 2>/dev/null | head -3)",
+      "Read(//home/orhun/.platformio/packages/**)",
+      "Bash(find ~/.platformio -name \"Arduino.h\" 2>/dev/null | head -5)",
+      "Read(//home/orhun/.platformio/**)",
+      "Bash(pip3 install *)",
+      "Bash(python3 -c \"import paho.mqtt.client; print\\('paho-mqtt OK'\\)\")",
+      "Bash(python3 -m venv .venv)",
+      "Bash(.venv/bin/pip install *)",
+      "Bash(.venv/bin/python -c \"import paho.mqtt.client; print\\('paho-mqtt OK'\\)\")",
+      "Bash(.venv/bin/python -m py_compile node_sim.py)",
+      "Bash(chmod +x wifi_sim.sh)",
+      "Bash(git stash *)",
+      "Bash(git pull *)"
+    ]
+  }
+}
