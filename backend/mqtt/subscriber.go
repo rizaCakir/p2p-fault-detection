@@ -14,10 +14,12 @@ import (
 	"p2pfault/backend/registry"
 )
 
-// Subscriber connects to MQTT brokers, logs all events to SQLite, and
-// pushes real-time updates to the WebSocket hub.
+// Subscriber connects to a single MQTT broker, logs all events to SQLite,
+// and pushes real-time updates to the WebSocket hub.
+// Instantiate one Subscriber per broker to receive messages from all brokers
+// simultaneously (paho connects to exactly one broker per client).
 type Subscriber struct {
-	brokers []string
+	broker  string
 	db      *db.DB
 	hub     *api.Hub
 	nodeID  string
@@ -25,9 +27,9 @@ type Subscriber struct {
 	client  paho.Client
 }
 
-func NewSubscriber(brokers []string, database *db.DB, hub *api.Hub, nodeID string, tracker *registry.SBCTracker) *Subscriber {
+func NewSubscriber(broker string, database *db.DB, hub *api.Hub, nodeID string, tracker *registry.SBCTracker) *Subscriber {
 	return &Subscriber{
-		brokers: brokers,
+		broker:  broker,
 		db:      database,
 		hub:     hub,
 		nodeID:  nodeID,
@@ -37,16 +39,16 @@ func NewSubscriber(brokers []string, database *db.DB, hub *api.Hub, nodeID strin
 
 func (s *Subscriber) Connect() error {
 	opts := paho.NewClientOptions()
-	for _, b := range s.brokers {
-		opts.AddBroker(b)
-	}
-	opts.SetClientID(fmt.Sprintf("backend-%s", s.nodeID))
+	opts.AddBroker(s.broker)
+	// Client IDs must be unique per broker connection; include broker address
+	// so two Subscribers for different brokers don't collide.
+	opts.SetClientID(fmt.Sprintf("backend-%s-%s", s.nodeID, s.broker))
 	opts.SetAutoReconnect(true)
 	opts.SetMaxReconnectInterval(30 * time.Second)
 	opts.SetKeepAlive(60 * time.Second)
 	opts.SetOnConnectHandler(s.onConnect)
 	opts.SetConnectionLostHandler(func(_ paho.Client, err error) {
-		log.Printf("[MQTT] connection lost: %v", err)
+		log.Printf("[MQTT] connection lost to %s: %v", s.broker, err)
 	})
 
 	s.client = paho.NewClient(opts)
@@ -60,7 +62,7 @@ func (s *Subscriber) Disconnect() {
 }
 
 func (s *Subscriber) onConnect(c paho.Client) {
-	log.Println("[MQTT] connected – subscribing to facility/# and sbc/heartbeat/#")
+	log.Printf("[MQTT] connected to %s – subscribing to facility/# and sbc/heartbeat/#", s.broker)
 	c.Subscribe("facility/#",      1, s.onFacilityMessage)
 	c.Subscribe("sbc/heartbeat/#", 1, s.onHeartbeat)
 }

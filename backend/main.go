@@ -40,13 +40,23 @@ func main() {
 	hub := api.NewHub()
 	go hub.Run()
 
-	// ── MQTT subscriber ───────────────────────────────────────────────
-	sub := mqtt.NewSubscriber([]string{mqttBroker1, mqttBroker2}, database, hub, sbcNodeID, tracker)
-	if err := sub.Connect(); err != nil {
-		log.Fatalf("MQTT connect failed: %v", err)
+	// ── MQTT subscribers (one per broker) ────────────────────────────
+	// paho connects to exactly one broker per client, so we create a
+	// separate Subscriber for each broker to receive messages from all nodes
+	// regardless of which broker they are connected to.
+	sub1 := mqtt.NewSubscriber(mqttBroker1, database, hub, sbcNodeID, tracker)
+	if err := sub1.Connect(); err != nil {
+		log.Fatalf("MQTT connect to broker1 failed: %v", err)
 	}
-	defer sub.Disconnect()
-	go sub.StartHeartbeat(30 * time.Second)
+	defer sub1.Disconnect()
+	go sub1.StartHeartbeat(30 * time.Second)
+
+	sub2 := mqtt.NewSubscriber(mqttBroker2, database, hub, sbcNodeID, tracker)
+	if err := sub2.Connect(); err != nil {
+		log.Printf("[MQTT] broker2 unavailable (%v) – continuing with broker1 only", err)
+	} else {
+		defer sub2.Disconnect()
+	}
 
 	// ── HTTP server ───────────────────────────────────────────────────
 	router := api.NewRouter(database, hub, tracker)

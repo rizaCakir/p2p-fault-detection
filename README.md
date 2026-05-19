@@ -26,11 +26,12 @@ A decentralized IoT monitoring and alarm system for industrial environments that
 
 ## Demo
 
-Full end-to-end demo on a single Linux machine — no ESP32 hardware needed.
+Full end-to-end demo on a single Linux machine — no ESP32 hardware needed.  
+**6 sensor nodes · 3 zones · 2 SBC brokers · live dashboard.**
 
-Open **six terminals** in the project root before you start.
+Open **nine terminals** in the project root before you start.
 
-### Terminal 1 — MQTT broker cluster
+### Terminal 1 — MQTT broker cluster (2 SBCs)
 
 ```bash
 cd sim
@@ -38,6 +39,11 @@ podman compose up
 ```
 
 Wait until both containers print `mosquitto version 2.x.x running`.
+
+| Container | Simulates | Port |
+|-----------|-----------|------|
+| `mqtt-sbc1` | Raspberry Pi SBC-1 (primary broker) | 1883 |
+| `mqtt-sbc2` | Raspberry Pi SBC-2 (secondary broker) | 1884 |
 
 ### Terminal 2 — Go backend
 
@@ -53,6 +59,8 @@ DB_PATH=./data/events.db \
 ./p2pfault
 ```
 
+You should see two `[MQTT] connected to …` lines — one per broker.
+
 ### Terminal 3 — React dashboard
 
 ```bash
@@ -61,86 +69,111 @@ npm install          # first time only
 npm run dev
 ```
 
-Open **http://localhost:3000** in a browser. The dashboard shows `reconnecting…` until at least one node comes online.
+Open **http://localhost:3000**. The dashboard shows `reconnecting…` until the first node comes online.
 
-### Terminals 4–6 — simulated ESP32 nodes
+### Terminals 4–9 — simulated ESP32 nodes
 
+First time only (run inside `sim/`):
 ```bash
-# First time only (inside sim/)
 cd sim && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ```
 
+Launch each in its own terminal. Nodes are spread across both brokers so the dashboard receives all telemetry:
+
 ```bash
-# Terminal 4 — esp_01, zone1
+# Terminal 4 — esp_01, zone1, primary=SBC-1
 cd sim && .venv/bin/python node_sim.py --node-id esp_01 --zone zone1 \
     --primary localhost --port 1883 --secondary localhost --secondary-port 1884
 
-# Terminal 5 — esp_02, zone1 (same zone, different broker)
+# Terminal 5 — esp_02, zone1, primary=SBC-2  (same zone, other broker)
 cd sim && .venv/bin/python node_sim.py --node-id esp_02 --zone zone1 \
     --primary localhost --port 1884 --secondary localhost --secondary-port 1883
 
-# Terminal 6 — esp_03, zone2 (different zone)
+# Terminal 6 — esp_03, zone2, primary=SBC-1
 cd sim && .venv/bin/python node_sim.py --node-id esp_03 --zone zone2 \
     --primary localhost --port 1883 --secondary localhost --secondary-port 1884
+
+# Terminal 7 — esp_04, zone2, primary=SBC-2
+cd sim && .venv/bin/python node_sim.py --node-id esp_04 --zone zone2 \
+    --primary localhost --port 1884 --secondary localhost --secondary-port 1883
+
+# Terminal 8 — esp_05, zone3, primary=SBC-1
+cd sim && .venv/bin/python node_sim.py --node-id esp_05 --zone zone3 \
+    --primary localhost --port 1883 --secondary localhost --secondary-port 1884
+
+# Terminal 9 — esp_06, zone3, primary=SBC-2
+cd sim && .venv/bin/python node_sim.py --node-id esp_06 --zone zone3 \
+    --primary localhost --port 1884 --secondary localhost --secondary-port 1883
 ```
 
-The dashboard now shows three nodes as **online / NORMAL**.
+The dashboard now shows **6 nodes** across 3 zones, all **online / NORMAL**.
 
 ---
 
-### Demo scenario 1 — P2P alert propagation
+### Demo scenario 1 — P2P alert propagation (zone isolation)
 
-In **Terminal 4** (`esp_01`), type and press Enter:
+In **Terminal 4** (`esp_01`, zone1):
 ```
 gas_critical
 ```
 
-**What to show on the dashboard:**
-- `esp_01` card turns red and blinks → `FAULT`
-- `esp_02` card turns orange → `PEER ALARM` (received alert over MQTT without any central server)
-- `esp_03` card stays green → unaffected (different zone)
-- Critical alert count increments in the stat bar
-- New entry appears at the top of the live alert feed
+**Dashboard:**
+- `esp_01` → red, blinking, `FAULT`
+- `esp_02` → orange, `PEER ALARM` (same zone — received alert P2P with no central server)
+- `esp_03`–`esp_06` → green, `NORMAL` (different zones — unaffected)
+- Critical count increments; new entry at the top of the alert feed
 
-Then clear:
+Clear the fault:
 ```
 clear
 ```
-- `esp_01` returns to `NORMAL`
-- `esp_02` remains `PEER ALARM` and auto-clears after 30 s
+`esp_01` → NORMAL. `esp_02` stays PEER ALARM and auto-clears after 30 s.
 
 ---
 
-### Demo scenario 2 — Local fault blocks peer alarm
+### Demo scenario 2 — Multi-zone emergency
 
-In **Terminal 5** (`esp_02`):
-```
-flame
-```
-Then immediately in **Terminal 4** (`esp_01`):
-```
-gas_warning
-```
+Simulate a building-wide event: fire alerts in two zones simultaneously.
 
-**What to show:** `esp_02` stays in `FAULT` (flame) — it ignores the peer gas warning. Local fault always has priority.
+In **Terminal 4** (`esp_01`, zone1): `flame`  
+In **Terminal 6** (`esp_03`, zone2): `gas_critical`
+
+**Dashboard shows:**
+- 4 nodes go red/orange (zone1 and zone2 nodes all react)
+- `esp_05`/`esp_06` in zone3 remain green
+- Alert feed shows two critical events in quick succession
+
+Clear both: type `clear` in Terminal 4, then Terminal 6.
 
 ---
 
-### Demo scenario 3 — Broker failover
+### Demo scenario 3 — Local fault blocks peer alarm
 
-Kill SBC-1 while `esp_01` is connected to it:
+In **Terminal 5** (`esp_02`): `flame` ← local fault first  
+Then in **Terminal 4** (`esp_01`): `gas_warning` ← peer alert sent to zone1
+
+**Dashboard:** `esp_02` stays in `FAULT` (flame) and ignores the gas warning.  
+Local fault always takes priority over a peer alarm.
+
+---
+
+### Demo scenario 4 — Broker failover
+
+Kill SBC-1 while 3 nodes (`esp_01`, `esp_03`, `esp_05`) are connected to it:
 ```bash
 podman compose stop sbc1
 ```
 
-Watch **Terminal 4**: after 3 failed reconnect attempts (~3 s), `esp_01` switches to SBC-2 automatically and reconnects. No data loss. Restore:
+Watch Terminals 4, 6, and 8: after 3 failed reconnect attempts each node switches to SBC-2 automatically. The dashboard keeps all 6 nodes visible with no data loss.
+
+Restore SBC-1:
 ```bash
 podman compose start sbc1
 ```
 
 ---
 
-### Demo scenario 4 — WiFi impairment
+### Demo scenario 5 — WiFi impairment
 
 Install `iproute2` inside the containers (one-time):
 ```bash
@@ -148,12 +181,14 @@ podman exec mqtt-sbc1 apk add --no-cache iproute2
 podman exec mqtt-sbc2 apk add --no-cache iproute2
 ```
 
-Apply poor WiFi conditions:
+Apply degraded WiFi on both brokers:
 ```bash
 cd sim && ./wifi_sim.sh --inside add 200 15   # 200 ms delay, 15% packet loss
 ```
 
-Trigger an alert from `esp_01` and observe delayed delivery on `esp_02`. Restore:
+Trigger `gas_critical` in Terminal 4. Observe the delayed delivery on `esp_02` in Terminal 5. Check the alert feed for out-of-order or delayed timestamps.
+
+Restore clean network:
 ```bash
 ./wifi_sim.sh --inside remove
 ```
@@ -635,115 +670,32 @@ All messages follow the envelope `{"type": "...", "payload": {...}}`.
 
 ## Option A — Linux Simulation (no hardware needed)
 
-Runs multiple simulated ESP32 nodes and two Mosquitto broker containers on your machine. Tests P2P alerting, broker failover, and WiFi impairment with real TCP/IP.
+Runs 6 simulated ESP32 nodes and two Mosquitto broker containers on your machine. Tests P2P alerting, broker failover, and WiFi impairment with real TCP/IP. See the [Demo](#demo) section for the full scripted walkthrough.
 
-### 1. Start the broker cluster
-
-```bash
-cd sim
-podman compose up -d
-```
-
-| Container | Simulates | Host port |
-|-----------|-----------|-----------|
-| `mqtt-sbc1` | Raspberry Pi SBC-1 | `1883` |
-| `mqtt-sbc2` | Raspberry Pi SBC-2 | `1884` |
-
-### 2. Set up the Python environment
+### Quick start
 
 ```bash
-cd sim
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+# 1. Start brokers
+cd sim && podman compose up -d
+
+# 2. Backend
+cd backend && go build -o p2pfault . && mkdir -p data
+MQTT_BROKER_1=tcp://localhost:1883 MQTT_BROKER_2=tcp://localhost:1884 \
+SBC_NODE_ID=sbc-demo LISTEN_ADDR=:8080 DB_PATH=./data/events.db ./p2pfault &
+
+# 3. Dashboard
+cd dashboard && npm install && npm run dev &
+
+# 4. Python venv (first time)
+cd sim && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+
+# 5. Launch nodes (one terminal each)
+.venv/bin/python node_sim.py --node-id esp_01 --zone zone1 --primary localhost --port 1883 --secondary localhost --secondary-port 1884
 ```
 
-### 3. Launch nodes (one terminal each)
+> **Rootful Podman:** bridge IPs are routable — use `--primary 192.168.1.100 --secondary 192.168.1.101` without port flags.
 
-```bash
-# Terminal 1 — esp_01, zone1, primary broker = SBC-1
-.venv/bin/python node_sim.py --node-id esp_01 --zone zone1 \
-    --primary localhost --port 1883 \
-    --secondary localhost --secondary-port 1884
-
-# Terminal 2 — esp_02, zone1, primary broker = SBC-2
-.venv/bin/python node_sim.py --node-id esp_02 --zone zone1 \
-    --primary localhost --port 1884 \
-    --secondary localhost --secondary-port 1883
-
-# Terminal 3 — esp_03, zone2 (different zone — will not receive zone1 alerts)
-.venv/bin/python node_sim.py --node-id esp_03 --zone zone2 \
-    --primary localhost --port 1883 \
-    --secondary localhost --secondary-port 1884
-```
-
-> **Rootful Podman:** if running as root, the bridge IPs are routable directly — use `--primary 192.168.1.100 --secondary 192.168.1.101` and omit the port flags.
-
-### 4. Demo scenarios
-
-Type commands into each node terminal and press Enter.
-
-#### Scenario 1 — P2P alert propagation
-
-In **Terminal 1** (`esp_01`): `gas_critical`
-- `esp_01` → `IDLE → FAULT_DETECTED`, publishes **one** retained alert
-- `esp_02` → `PEER_ALARM_ACTIVE`
-- `esp_03` → **no reaction** (different zone)
-
-Then `clear` → `esp_01` returns to IDLE; `esp_02` auto-expires after 30 s.
-
-#### Scenario 2 — Local fault priority
-
-In `esp_02`: `flame` (local fault).  
-Then in `esp_01`: `gas_warning` (peer alert toward `esp_02`).  
-`esp_02` ignores the peer alert — local fault always wins.
-
-#### Scenario 3 — Broker failover
-
-```bash
-podman compose stop sbc1   # kill primary broker
-```
-After 3 failed attempts, `esp_01` switches to SBC-2 automatically.  
-```bash
-podman compose start sbc1  # restore
-```
-
-#### Scenario 4 — WiFi impairment
-
-```bash
-# Apply tc netem inside broker containers (rootless Podman)
-podman exec mqtt-sbc1 apk add --no-cache iproute2
-podman exec mqtt-sbc2 apk add --no-cache iproute2
-
-./wifi_sim.sh --inside add 120 5    # 120 ms delay, 5% loss (congested)
-./wifi_sim.sh preset poor           # 200 ms / 15% loss (edge of coverage)
-./wifi_sim.sh --inside status       # show current impairment
-./wifi_sim.sh --inside remove       # restore clean network
-```
-
-### 5. Start the backend and dashboard
-
-```bash
-# Terminal 4 — Go backend (points at simulated brokers)
-cd backend
-go build -o p2pfault .
-MQTT_BROKER_1=tcp://localhost:1883 \
-MQTT_BROKER_2=tcp://localhost:1884 \
-SBC_NODE_ID=sbc-1 \
-LISTEN_ADDR=:8080 \
-DB_PATH=./data/events.db \
-./p2pfault
-```
-
-```bash
-# Terminal 5 — Dashboard (Vite dev server on :3000)
-cd dashboard
-npm install
-npm run dev
-```
-
-Open `http://localhost:3000`.
-
-### 6. Stop the simulation
+### Stop the simulation
 
 ```bash
 cd sim && podman compose down
