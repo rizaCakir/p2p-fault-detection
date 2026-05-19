@@ -29,26 +29,9 @@ A decentralized IoT monitoring and alarm system for industrial environments that
 Full end-to-end demo on a single Linux machine — no ESP32 hardware needed.  
 **12 sensor nodes · 3 zones · 2 SBC brokers · live dashboard.**
 
-### One-command launch
+### Node layout
 
-```bash
-./demo.sh
-```
-
-The script (`demo.sh` in the project root):
-1. Installs `tmux` via pacman if missing
-2. Builds the backend binary and Python venv on first run
-3. Opens a single Alacritty window with a tmux session containing:
-
-| tmux window | Contents |
-|-------------|----------|
-| `infra` | Brokers (left pane) · Backend (right pane) |
-| `dashboard` | `npm run dev` |
-| `zone1` | `esp_01`–`esp_04` in a 2×2 pane grid |
-| `zone2` | `esp_05`–`esp_08` in a 2×2 pane grid |
-| `zone3` | `esp_09`–`esp_12` in a 2×2 pane grid |
-
-Node layout (12 nodes, alternating brokers within each zone):
+12 nodes across 3 zones, alternating between the two brokers:
 
 | Node | Zone | Primary broker |
 |------|------|----------------|
@@ -59,21 +42,63 @@ Node layout (12 nodes, alternating brokers within each zone):
 | esp_09, esp_11 | zone3 | SBC-1 :1883 |
 | esp_10, esp_12 | zone3 | SBC-2 :1884 |
 
-Open **http://localhost:3000** — dashboard shows 12 nodes across 3 zones, all **NORMAL**.
+### Terminal 1 — MQTT broker cluster
 
-Switch tmux windows: `Ctrl-b` then `1`–`5` (or `n`/`p` for next/previous).  
-Type commands directly into any node pane to inject faults.
-
-To stop everything:
 ```bash
-./demo.sh stop
+cd sim && podman compose up
 ```
+
+### Terminal 2 — Go backend
+
+```bash
+cd backend && go build -o p2pfault . && mkdir -p data
+MQTT_BROKER_1=tcp://localhost:1883 \
+MQTT_BROKER_2=tcp://localhost:1884 \
+SBC_NODE_ID=sbc-demo LISTEN_ADDR=:8080 DB_PATH=./data/events.db \
+./p2pfault
+```
+
+### Terminal 3 — Dashboard
+
+```bash
+cd dashboard && npm install && npm run dev
+```
+
+Open **http://localhost:3000**.
+
+### Terminals 4–15 — ESP32 nodes (one per terminal)
+
+```bash
+# First time only
+cd sim && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+```
+
+```bash
+cd sim
+# zone1
+.venv/bin/python node_sim.py --node-id esp_01 --zone zone1 --primary localhost --port 1883 --secondary localhost --secondary-port 1884
+.venv/bin/python node_sim.py --node-id esp_02 --zone zone1 --primary localhost --port 1884 --secondary localhost --secondary-port 1883
+.venv/bin/python node_sim.py --node-id esp_03 --zone zone1 --primary localhost --port 1883 --secondary localhost --secondary-port 1884
+.venv/bin/python node_sim.py --node-id esp_04 --zone zone1 --primary localhost --port 1884 --secondary localhost --secondary-port 1883
+# zone2
+.venv/bin/python node_sim.py --node-id esp_05 --zone zone2 --primary localhost --port 1883 --secondary localhost --secondary-port 1884
+.venv/bin/python node_sim.py --node-id esp_06 --zone zone2 --primary localhost --port 1884 --secondary localhost --secondary-port 1883
+.venv/bin/python node_sim.py --node-id esp_07 --zone zone2 --primary localhost --port 1883 --secondary localhost --secondary-port 1884
+.venv/bin/python node_sim.py --node-id esp_08 --zone zone2 --primary localhost --port 1884 --secondary localhost --secondary-port 1883
+# zone3
+.venv/bin/python node_sim.py --node-id esp_09 --zone zone3 --primary localhost --port 1883 --secondary localhost --secondary-port 1884
+.venv/bin/python node_sim.py --node-id esp_10 --zone zone3 --primary localhost --port 1884 --secondary localhost --secondary-port 1883
+.venv/bin/python node_sim.py --node-id esp_11 --zone zone3 --primary localhost --port 1883 --secondary localhost --secondary-port 1884
+.venv/bin/python node_sim.py --node-id esp_12 --zone zone3 --primary localhost --port 1884 --secondary localhost --secondary-port 1883
+```
+
+Dashboard shows **12 nodes** across 3 zones, all **NORMAL**.
 
 ---
 
 ### Demo scenario 1 — P2P alert propagation (zone isolation)
 
-In the **zone1** tmux window, type in the `esp_01` pane:
+In the `esp_01` terminal (zone1):
 ```
 gas_critical
 ```
@@ -96,8 +121,8 @@ clear
 
 Fire alerts in two zones at once to simulate a building-wide event.
 
-In **zone1** (`esp_01`): `flame`  
-In **zone2** (`esp_05`): `gas_critical`
+In the `esp_01` terminal: `flame`  
+In the `esp_05` terminal: `gas_critical`
 
 **Dashboard:** 8 nodes go red/orange simultaneously (all of zone1 and zone2). Zone3 stays green. Two critical events appear back-to-back in the alert feed.
 
@@ -107,8 +132,8 @@ Clear both zones when done.
 
 ### Demo scenario 3 — Local fault blocks peer alarm
 
-In **zone1**, `esp_02` pane: `flame` ← local fault  
-Then `esp_01` pane: `gas_warning` ← peer alert arrives
+In the `esp_02` terminal: `flame` ← local fault  
+Then the `esp_01` terminal: `gas_warning` ← peer alert arrives
 
 **Dashboard:** `esp_02` stays `FAULT` (flame) — ignores the incoming peer gas warning.  
 Local fault always takes priority.
@@ -122,7 +147,7 @@ Kill SBC-1 (half the nodes lose their primary broker):
 podman compose stop sbc1
 ```
 
-In the zone windows, watch `esp_01`, `esp_03`, `esp_05`, `esp_07`, `esp_09`, `esp_11` — after 3 failed reconnect attempts each switches to SBC-2. Dashboard keeps all 12 nodes visible.
+Watch the terminals for `esp_01`, `esp_03`, `esp_05`, `esp_07`, `esp_09`, `esp_11` — after 3 failed reconnect attempts each switches to SBC-2. Dashboard keeps all 12 nodes visible.
 
 Restore:
 ```bash
