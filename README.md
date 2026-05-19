@@ -27,146 +27,104 @@ A decentralized IoT monitoring and alarm system for industrial environments that
 ## Demo
 
 Full end-to-end demo on a single Linux machine — no ESP32 hardware needed.  
-**6 sensor nodes · 3 zones · 2 SBC brokers · live dashboard.**
+**12 sensor nodes · 3 zones · 2 SBC brokers · live dashboard.**
 
-Open **nine terminals** in the project root before you start.
-
-### Terminal 1 — MQTT broker cluster (2 SBCs)
+### One-command launch
 
 ```bash
-cd sim
-podman compose up
+./demo.sh
 ```
 
-Wait until both containers print `mosquitto version 2.x.x running`.
+The script (`demo.sh` in the project root):
+1. Installs `tmux` via pacman if missing
+2. Builds the backend binary and Python venv on first run
+3. Opens a single Alacritty window with a tmux session containing:
 
-| Container | Simulates | Port |
-|-----------|-----------|------|
-| `mqtt-sbc1` | Raspberry Pi SBC-1 (primary broker) | 1883 |
-| `mqtt-sbc2` | Raspberry Pi SBC-2 (secondary broker) | 1884 |
+| tmux window | Contents |
+|-------------|----------|
+| `infra` | Brokers (left pane) · Backend (right pane) |
+| `dashboard` | `npm run dev` |
+| `zone1` | `esp_01`–`esp_04` in a 2×2 pane grid |
+| `zone2` | `esp_05`–`esp_08` in a 2×2 pane grid |
+| `zone3` | `esp_09`–`esp_12` in a 2×2 pane grid |
 
-### Terminal 2 — Go backend
+Node layout (12 nodes, alternating brokers within each zone):
 
+| Node | Zone | Primary broker |
+|------|------|----------------|
+| esp_01, esp_03 | zone1 | SBC-1 :1883 |
+| esp_02, esp_04 | zone1 | SBC-2 :1884 |
+| esp_05, esp_07 | zone2 | SBC-1 :1883 |
+| esp_06, esp_08 | zone2 | SBC-2 :1884 |
+| esp_09, esp_11 | zone3 | SBC-1 :1883 |
+| esp_10, esp_12 | zone3 | SBC-2 :1884 |
+
+Open **http://localhost:3000** — dashboard shows 12 nodes across 3 zones, all **NORMAL**.
+
+Switch tmux windows: `Ctrl-b` then `1`–`5` (or `n`/`p` for next/previous).  
+Type commands directly into any node pane to inject faults.
+
+To stop everything:
 ```bash
-cd backend
-go build -o p2pfault .
-mkdir -p data
-MQTT_BROKER_1=tcp://localhost:1883 \
-MQTT_BROKER_2=tcp://localhost:1884 \
-SBC_NODE_ID=sbc-demo \
-LISTEN_ADDR=:8080 \
-DB_PATH=./data/events.db \
-./p2pfault
+./demo.sh stop
 ```
-
-You should see two `[MQTT] connected to …` lines — one per broker.
-
-### Terminal 3 — React dashboard
-
-```bash
-cd dashboard
-npm install          # first time only
-npm run dev
-```
-
-Open **http://localhost:3000**. The dashboard shows `reconnecting…` until the first node comes online.
-
-### Terminals 4–9 — simulated ESP32 nodes
-
-First time only (run inside `sim/`):
-```bash
-cd sim && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-```
-
-Launch each in its own terminal. Nodes are spread across both brokers so the dashboard receives all telemetry:
-
-```bash
-# Terminal 4 — esp_01, zone1, primary=SBC-1
-cd sim && .venv/bin/python node_sim.py --node-id esp_01 --zone zone1 \
-    --primary localhost --port 1883 --secondary localhost --secondary-port 1884
-
-# Terminal 5 — esp_02, zone1, primary=SBC-2  (same zone, other broker)
-cd sim && .venv/bin/python node_sim.py --node-id esp_02 --zone zone1 \
-    --primary localhost --port 1884 --secondary localhost --secondary-port 1883
-
-# Terminal 6 — esp_03, zone2, primary=SBC-1
-cd sim && .venv/bin/python node_sim.py --node-id esp_03 --zone zone2 \
-    --primary localhost --port 1883 --secondary localhost --secondary-port 1884
-
-# Terminal 7 — esp_04, zone2, primary=SBC-2
-cd sim && .venv/bin/python node_sim.py --node-id esp_04 --zone zone2 \
-    --primary localhost --port 1884 --secondary localhost --secondary-port 1883
-
-# Terminal 8 — esp_05, zone3, primary=SBC-1
-cd sim && .venv/bin/python node_sim.py --node-id esp_05 --zone zone3 \
-    --primary localhost --port 1883 --secondary localhost --secondary-port 1884
-
-# Terminal 9 — esp_06, zone3, primary=SBC-2
-cd sim && .venv/bin/python node_sim.py --node-id esp_06 --zone zone3 \
-    --primary localhost --port 1884 --secondary localhost --secondary-port 1883
-```
-
-The dashboard now shows **6 nodes** across 3 zones, all **online / NORMAL**.
 
 ---
 
 ### Demo scenario 1 — P2P alert propagation (zone isolation)
 
-In **Terminal 4** (`esp_01`, zone1):
+In the **zone1** tmux window, type in the `esp_01` pane:
 ```
 gas_critical
 ```
 
 **Dashboard:**
-- `esp_01` → red, blinking, `FAULT`
-- `esp_02` → orange, `PEER ALARM` (same zone — received alert P2P with no central server)
-- `esp_03`–`esp_06` → green, `NORMAL` (different zones — unaffected)
-- Critical count increments; new entry at the top of the alert feed
+- `esp_01` → red, blinking → `FAULT`
+- `esp_02`, `esp_03`, `esp_04` → orange → `PEER ALARM` (same zone, no central server involved)
+- `esp_05`–`esp_12` → green → `NORMAL` (different zones — unaffected)
+- Critical counter increments; alert appears at the top of the live feed
 
-Clear the fault:
+Clear:
 ```
 clear
 ```
-`esp_01` → NORMAL. `esp_02` stays PEER ALARM and auto-clears after 30 s.
+`esp_01` → NORMAL. Zone1 peers stay PEER ALARM and auto-clear after 30 s.
 
 ---
 
 ### Demo scenario 2 — Multi-zone emergency
 
-Simulate a building-wide event: fire alerts in two zones simultaneously.
+Fire alerts in two zones at once to simulate a building-wide event.
 
-In **Terminal 4** (`esp_01`, zone1): `flame`  
-In **Terminal 6** (`esp_03`, zone2): `gas_critical`
+In **zone1** (`esp_01`): `flame`  
+In **zone2** (`esp_05`): `gas_critical`
 
-**Dashboard shows:**
-- 4 nodes go red/orange (zone1 and zone2 nodes all react)
-- `esp_05`/`esp_06` in zone3 remain green
-- Alert feed shows two critical events in quick succession
+**Dashboard:** 8 nodes go red/orange simultaneously (all of zone1 and zone2). Zone3 stays green. Two critical events appear back-to-back in the alert feed.
 
-Clear both: type `clear` in Terminal 4, then Terminal 6.
+Clear both zones when done.
 
 ---
 
 ### Demo scenario 3 — Local fault blocks peer alarm
 
-In **Terminal 5** (`esp_02`): `flame` ← local fault first  
-Then in **Terminal 4** (`esp_01`): `gas_warning` ← peer alert sent to zone1
+In **zone1**, `esp_02` pane: `flame` ← local fault  
+Then `esp_01` pane: `gas_warning` ← peer alert arrives
 
-**Dashboard:** `esp_02` stays in `FAULT` (flame) and ignores the gas warning.  
-Local fault always takes priority over a peer alarm.
+**Dashboard:** `esp_02` stays `FAULT` (flame) — ignores the incoming peer gas warning.  
+Local fault always takes priority.
 
 ---
 
 ### Demo scenario 4 — Broker failover
 
-Kill SBC-1 while 3 nodes (`esp_01`, `esp_03`, `esp_05`) are connected to it:
+Kill SBC-1 (half the nodes lose their primary broker):
 ```bash
 podman compose stop sbc1
 ```
 
-Watch Terminals 4, 6, and 8: after 3 failed reconnect attempts each node switches to SBC-2 automatically. The dashboard keeps all 6 nodes visible with no data loss.
+In the zone windows, watch `esp_01`, `esp_03`, `esp_05`, `esp_07`, `esp_09`, `esp_11` — after 3 failed reconnect attempts each switches to SBC-2. Dashboard keeps all 12 nodes visible.
 
-Restore SBC-1:
+Restore:
 ```bash
 podman compose start sbc1
 ```
@@ -175,30 +133,20 @@ podman compose start sbc1
 
 ### Demo scenario 5 — WiFi impairment
 
-Install `iproute2` inside the containers (one-time):
+Install `iproute2` in the containers (one-time):
 ```bash
 podman exec mqtt-sbc1 apk add --no-cache iproute2
 podman exec mqtt-sbc2 apk add --no-cache iproute2
 ```
 
-Apply degraded WiFi on both brokers:
+Apply congested WiFi:
 ```bash
-cd sim && ./wifi_sim.sh --inside add 200 15   # 200 ms delay, 15% packet loss
+cd sim && ./wifi_sim.sh --inside add 200 15   # 200 ms delay, 15% loss
 ```
 
-Trigger `gas_critical` in Terminal 4. Observe the delayed delivery on `esp_02` in Terminal 5. Check the alert feed for out-of-order or delayed timestamps.
-
-Restore clean network:
+Trigger `gas_critical` from `esp_01`. Observe delayed delivery to zone1 peers. Restore:
 ```bash
 ./wifi_sim.sh --inside remove
-```
-
----
-
-### Tear down
-
-```bash
-cd sim && podman compose down
 ```
 
 ---
@@ -670,7 +618,7 @@ All messages follow the envelope `{"type": "...", "payload": {...}}`.
 
 ## Option A — Linux Simulation (no hardware needed)
 
-Runs 6 simulated ESP32 nodes and two Mosquitto broker containers on your machine. Tests P2P alerting, broker failover, and WiFi impairment with real TCP/IP. See the [Demo](#demo) section for the full scripted walkthrough.
+Runs 12 simulated ESP32 nodes and two Mosquitto broker containers on your machine. Tests P2P alerting, broker failover, and WiFi impairment with real TCP/IP. See the [Demo](#demo) section for the full scripted walkthrough (`./demo.sh`).
 
 ### Quick start
 
