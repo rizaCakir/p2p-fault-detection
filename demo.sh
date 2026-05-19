@@ -117,7 +117,7 @@ make_zone zone1  esp_01 esp_02 esp_03 esp_04
 make_zone zone2  esp_05 esp_06 esp_07 esp_08
 make_zone zone3  esp_09 esp_10 esp_11 esp_12
 
-# ── focus infra and open Alacritty ───────────────────────────────────────
+# ── focus infra and attach ────────────────────────────────────────────────
 tmux select-window -t "$SESSION:infra"
 
 echo ""
@@ -127,11 +127,8 @@ echo "  Nodes:    12 ESP nodes (4 per zone)"
 echo "  Brokers:  localhost:1883 (SBC-1)  localhost:1884 (SBC-2)"
 echo "  Dashboard: http://localhost:3000"
 echo ""
-echo "  To stop: ./demo.sh stop   or Ctrl-C in the broker pane"
+echo "  Switch windows: Ctrl-b 1-5   |   Detach: Ctrl-b d"
+echo "  To stop: ./demo.sh stop"
 echo ""
 
-alacritty \
-    --title "P2P Fault Detection Demo" \
-    --option "window.dimensions.columns=220" \
-    --option "window.dimensions.lines=55" \
-    -- tmux attach-session -t "$SESSION"
+exec tmux attach-session -t "$SESSION"
