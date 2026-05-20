@@ -12,12 +12,14 @@
 
 // ── Node identity ─────────────────────────────────────────────────────
 #define NODE_ID "esp_01"
-#define ZONE_ID "zone1"
+#define ZONE_ID "zone1"           // zone served by the primary broker
+#define ZONE_ID_SECONDARY "zone2" // zone served by the secondary broker (for topic switching on failover)
 
 // ── MQTT topic templates ──────────────────────────────────────────────
-#define TOPIC_ALERTS    "facility/" ZONE_ID "/alerts"
-#define TOPIC_TELEMETRY "facility/" ZONE_ID "/" NODE_ID "/telemetry"
-#define TOPIC_SUBSCRIBE "facility/+/alerts"   // wildcard: listen to all zones
+#define TOPIC_ALERTS           "facility/" ZONE_ID           "/alerts"
+#define TOPIC_ALERTS_SECONDARY "facility/" ZONE_ID_SECONDARY "/alerts"
+#define TOPIC_TELEMETRY        "facility/" ZONE_ID "/" NODE_ID "/telemetry"
+#define TOPIC_SUBSCRIBE        "facility/+/alerts"   // wildcard: listen to all zones
 
 // ── GPIO pins ─────────────────────────────────────────────────────────
 #define PIN_GAS_SENSOR   34   // ADC1_CH6  – MQ-2 analog output

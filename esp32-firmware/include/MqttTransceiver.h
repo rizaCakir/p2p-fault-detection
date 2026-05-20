@@ -17,7 +17,11 @@ public:
     void update();
 
     bool publish(const char* topic, const JsonDocument& doc, bool retained = false);
-    bool isConnected() const;
+    bool isConnected()    const;
+    bool isUsingPrimary() const { return _usePrimary; }
+
+    // Returns the alert topic for the currently active broker
+    const char* getAlertTopic() const;
 
 private:
     WiFiClient    _wifiClient;

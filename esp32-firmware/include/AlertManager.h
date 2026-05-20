@@ -1,5 +1,6 @@
 #pragma once
 #include <Arduino.h>
+#include <set>
 
 enum class NodeState : uint8_t {
     IDLE              = 0,
@@ -25,10 +26,14 @@ public:
     // Called when an MQTT alert arrives from a peer node
     void onPeerAlert(const char* peerId, FaultType fault);
 
-    // Call when sensor readings return to safe levels
+    // Called when a peer sends a clear message (type="none")
+    // Clears PEER_ALARM only when every alerting peer has recovered
+    void onPeerClear(const char* peerId);
+
+    // Called when local sensor readings return to safe levels
     void onClear();
 
-    // Must be called every loop() iteration for LED blink timing
+    // Must be called every loop() iteration for LED blink timing and peer alarm timeout
     void update();
 
     NodeState getState()        const { return _state; }
@@ -39,11 +44,12 @@ private:
     int _ledRedPin;
     int _ledGreenPin;
 
-    NodeState     _state;
-    FaultType     _currentFault;
-    unsigned long _lastBlink;
-    bool          _blinkOn;
-    unsigned long _peerAlarmSetAt;
+    NodeState        _state;
+    FaultType        _currentFault;
+    unsigned long    _lastBlink;
+    bool             _blinkOn;
+    unsigned long    _peerAlarmSetAt;
+    std::set<String> _alertingPeers; // tracks which peers are currently faulting
 
     void activateAlarm(bool critical);
     void deactivateAlarm();

@@ -1,4 +1,5 @@
 #include "AlertManager.h"
+#include "config.h"
 
 static constexpr unsigned long BLINK_INTERVAL_MS = 500;
 
@@ -11,7 +12,7 @@ AlertManager::AlertManager(int buzzerPin, int ledRedPin, int ledGreenPin)
 void AlertManager::begin() {
     pinMode(_ledRedPin,   OUTPUT);
     pinMode(_ledGreenPin, OUTPUT);
-    ledcAttach(_buzzerPin, 2000, 8); // attach once; freq/duty changed later
+    ledcAttach(_buzzerPin, 2000, 8);
     deactivateAlarm();
     digitalWrite(_ledGreenPin, HIGH);
 }
@@ -24,18 +25,29 @@ void AlertManager::onLocalFault(FaultType fault) {
     activateAlarm(critical);
 }
 
-void AlertManager::onPeerAlert(const char* /*peerId*/, FaultType fault) {
+void AlertManager::onPeerAlert(const char* peerId, FaultType fault) {
+    _alertingPeers.insert(String(peerId));
     if (_state == NodeState::FAULT_DETECTED) return; // local fault has priority
-    _peerAlarmSetAt = millis(); // (re)start timeout on every arriving peer alert
+
+    _peerAlarmSetAt = millis();
     _currentFault   = fault;
     if (_state != NodeState::PEER_ALARM_ACTIVE) {
         _state = NodeState::PEER_ALARM_ACTIVE;
         digitalWrite(_ledGreenPin, LOW);
-        activateAlarm(false); // peer alarm uses lower-priority tone
+        activateAlarm(false);
     }
 }
 
+void AlertManager::onPeerClear(const char* peerId) {
+    _alertingPeers.erase(String(peerId));
+    // Only clear the peer alarm once every alerting peer has recovered
+    if (_state != NodeState::PEER_ALARM_ACTIVE || !_alertingPeers.empty()) return;
+    Serial.printf("[ALERT] peer clear from %s — all peers recovered, returning to IDLE\n", peerId);
+    onClear();
+}
+
 void AlertManager::onClear() {
+    _alertingPeers.clear();
     _state        = NodeState::IDLE;
     _currentFault = FaultType::NONE;
     deactivateAlarm();
@@ -48,6 +60,7 @@ void AlertManager::update() {
     // Auto-expire peer alarm if the peer stops sending within the timeout window
     if (_state == NodeState::PEER_ALARM_ACTIVE &&
         millis() - _peerAlarmSetAt >= PEER_ALARM_TIMEOUT_MS) {
+        Serial.println("[ALERT] peer alarm timeout — returning to IDLE");
         onClear();
         return;
     }
@@ -62,11 +75,11 @@ void AlertManager::update() {
 
 void AlertManager::activateAlarm(bool critical) {
     uint32_t freq = critical ? 1200 : 600;
-    ledcWriteTone(_buzzerPin, freq); // sets freq + 50% duty
+    ledcWriteTone(_buzzerPin, freq);
 }
 
 void AlertManager::deactivateAlarm() {
-    ledcWrite(_buzzerPin, 0); // zero duty = silent
+    ledcWrite(_buzzerPin, 0);
     digitalWrite(_ledRedPin,   LOW);
     digitalWrite(_ledGreenPin, LOW);
 }

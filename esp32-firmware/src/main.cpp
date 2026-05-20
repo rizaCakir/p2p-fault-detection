@@ -23,22 +23,27 @@ static const char* faultTypeName(FaultType ft) {
 }
 
 static void publishAlert(FaultType fault, int val) {
+    // Use the topic and zone of the currently active broker (switches on failover)
+    const char* topic       = mqttTransceiver.getAlertTopic();
+    const char* currentZone = mqttTransceiver.isUsingPrimary() ? ZONE_ID : ZONE_ID_SECONDARY;
     StaticJsonDocument<256> doc;
     doc["node_id"]   = NODE_ID;
-    doc["zone_id"]   = ZONE_ID;
+    doc["zone_id"]   = currentZone;
     doc["type"]      = faultTypeName(fault);
     doc["val"]       = val;
-    doc["timestamp"] = millis(); // replace with NTP epoch if a time sync is added
-    // retained=true so late-joining subscribers know the current alert state
-    mqttTransceiver.publish(TOPIC_ALERTS, doc, true);
+    doc["timestamp"] = millis();
+    mqttTransceiver.publish(topic, doc); // retain=false: no stale alerts on broker reconnect
 }
 
 static void publishTelemetry() {
+    // Only report real sensor readings when this node itself is faulting;
+    // in PEER_ALARM_ACTIVE report zeros so the dashboard doesn't show the peer's values
+    bool localFault = (alertManager.getState() == NodeState::FAULT_DETECTED);
     StaticJsonDocument<256> doc;
     doc["node_id"]   = NODE_ID;
     doc["zone_id"]   = ZONE_ID;
-    doc["gas_val"]   = sensorPoller.getFilteredGasValue();
-    doc["flame"]     = sensorPoller.isFlameDetected();
+    doc["gas_val"]   = localFault ? sensorPoller.getFilteredGasValue() : 0;
+    doc["flame"]     = localFault && sensorPoller.isFlameDetected();
     doc["state"]     = (int)alertManager.getState();
     doc["timestamp"] = millis();
     mqttTransceiver.publish(TOPIC_TELEMETRY, doc);
@@ -47,14 +52,17 @@ static void publishTelemetry() {
 // ── Peer alert callback ───────────────────────────────────────────────
 
 static void onPeerAlert(const char* nodeId, const char* faultType, int val) {
-    Serial.printf("[PEER] alert from %s  type=%s  val=%d\n", nodeId, faultType, val);
-
     FaultType ft = FaultType::NONE;
     if      (strcmp(faultType, "gas_warning")  == 0) ft = FaultType::GAS_WARNING;
     else if (strcmp(faultType, "gas_critical") == 0) ft = FaultType::GAS_CRITICAL;
     else if (strcmp(faultType, "flame")        == 0) ft = FaultType::FLAME;
 
-    if (ft != FaultType::NONE) {
+    if (ft == FaultType::NONE) {
+        // type="none" is a clear message from a peer that has recovered
+        Serial.printf("[PEER] clear from %s\n", nodeId);
+        alertManager.onPeerClear(nodeId);
+    } else {
+        Serial.printf("[PEER] alert from %s  type=%s  val=%d\n", nodeId, faultType, val);
         alertManager.onPeerAlert(nodeId, ft);
     }
 }

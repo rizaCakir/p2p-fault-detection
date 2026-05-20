@@ -63,7 +63,14 @@ bool MqttTransceiver::reconnectMqtt() {
 
 void MqttTransceiver::switchBroker() {
     _usePrimary = !_usePrimary;
-    Serial.printf("[MQTT] switching to %s broker\n", _usePrimary ? "primary" : "secondary");
+    Serial.printf("[MQTT] switching to %s broker (%s) — alert topic: %s\n",
+                  _usePrimary ? "primary" : "secondary",
+                  _usePrimary ? MQTT_BROKER_PRIMARY : MQTT_BROKER_SECONDARY,
+                  getAlertTopic());
+}
+
+const char* MqttTransceiver::getAlertTopic() const {
+    return _usePrimary ? TOPIC_ALERTS : TOPIC_ALERTS_SECONDARY;
 }
 
 // ── Public ────────────────────────────────────────────────────────────
