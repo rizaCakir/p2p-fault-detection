@@ -27,20 +27,17 @@ A decentralized IoT monitoring and alarm system for industrial environments that
 ## Demo
 
 Full end-to-end demo on a single Linux machine — no ESP32 hardware needed.  
-**12 sensor nodes · 3 zones · 2 SBC brokers · live dashboard.**
+**12 sensor nodes · 3 zones · 3 SBC brokers · live dashboard.**
 
 ### Node layout
 
-12 nodes across 3 zones, alternating between the two brokers:
+12 nodes across 3 zones. Each node connects to its nearest SBC broker; if that broker fails it switches to its secondary. The three SBC brokers are **bridged** — an alert published on any broker is forwarded to the other two, so every ESP in the facility receives every alert regardless of which broker it is connected to.
 
-| Node | Zone | Primary broker |
-|------|------|----------------|
-| esp_01, esp_04 | zone1 | SBC-1 :1883 |
-| esp_02, esp_05 | zone2 | SBC-2 :1884 |
-| esp_03, esp_06 | zone3 | SBC-3 :1885 |
-| esp_07, esp_10 | zone1 | SBC-1 :1883 |
-| esp_08, esp_11 | zone2 | SBC-2 :1884 |
-| esp_09, esp_12 | zone3 | SBC-3 :1885 |
+| Node | Zone | Primary broker | Secondary (failover) |
+|------|------|----------------|----------------------|
+| esp_01–esp_04 | zone1 | SBC-1 :1883 | SBC-2 :1884 |
+| esp_05–esp_08 | zone2 | SBC-2 :1884 | SBC-3 :1885 |
+| esp_09–esp_12 | zone3 | SBC-3 :1885 | SBC-1 :1883 |
 
 ### Terminal 1 — MQTT broker cluster (3 SBCs)
 
@@ -82,58 +79,58 @@ cd sim && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 ```bash
 cd sim
-# zone1 — nodes cycle across all 3 brokers
+# zone1 — all 4 nodes on SBC-1 (primary), SBC-2 (secondary)
 .venv/bin/python node_sim.py --node-id esp_01 --zone zone1 --primary localhost --port 1883 --secondary localhost --secondary-port 1884
-.venv/bin/python node_sim.py --node-id esp_02 --zone zone1 --primary localhost --port 1884 --secondary localhost --secondary-port 1885
-.venv/bin/python node_sim.py --node-id esp_03 --zone zone1 --primary localhost --port 1885 --secondary localhost --secondary-port 1883
-.venv/bin/python node_sim.py --node-id esp_04 --zone zone1 --primary localhost --port 1883 --secondary localhost --secondary-port 1885
-# zone2
-.venv/bin/python node_sim.py --node-id esp_05 --zone zone2 --primary localhost --port 1884 --secondary localhost --secondary-port 1883
-.venv/bin/python node_sim.py --node-id esp_06 --zone zone2 --primary localhost --port 1885 --secondary localhost --secondary-port 1884
-.venv/bin/python node_sim.py --node-id esp_07 --zone zone2 --primary localhost --port 1883 --secondary localhost --secondary-port 1884
+.venv/bin/python node_sim.py --node-id esp_02 --zone zone1 --primary localhost --port 1883 --secondary localhost --secondary-port 1884
+.venv/bin/python node_sim.py --node-id esp_03 --zone zone1 --primary localhost --port 1883 --secondary localhost --secondary-port 1884
+.venv/bin/python node_sim.py --node-id esp_04 --zone zone1 --primary localhost --port 1883 --secondary localhost --secondary-port 1884
+# zone2 — all 4 nodes on SBC-2 (primary), SBC-3 (secondary)
+.venv/bin/python node_sim.py --node-id esp_05 --zone zone2 --primary localhost --port 1884 --secondary localhost --secondary-port 1885
+.venv/bin/python node_sim.py --node-id esp_06 --zone zone2 --primary localhost --port 1884 --secondary localhost --secondary-port 1885
+.venv/bin/python node_sim.py --node-id esp_07 --zone zone2 --primary localhost --port 1884 --secondary localhost --secondary-port 1885
 .venv/bin/python node_sim.py --node-id esp_08 --zone zone2 --primary localhost --port 1884 --secondary localhost --secondary-port 1885
-# zone3
+# zone3 — all 4 nodes on SBC-3 (primary), SBC-1 (secondary)
 .venv/bin/python node_sim.py --node-id esp_09 --zone zone3 --primary localhost --port 1885 --secondary localhost --secondary-port 1883
-.venv/bin/python node_sim.py --node-id esp_10 --zone zone3 --primary localhost --port 1883 --secondary localhost --secondary-port 1885
-.venv/bin/python node_sim.py --node-id esp_11 --zone zone3 --primary localhost --port 1884 --secondary localhost --secondary-port 1883
-.venv/bin/python node_sim.py --node-id esp_12 --zone zone3 --primary localhost --port 1885 --secondary localhost --secondary-port 1884
+.venv/bin/python node_sim.py --node-id esp_10 --zone zone3 --primary localhost --port 1885 --secondary localhost --secondary-port 1883
+.venv/bin/python node_sim.py --node-id esp_11 --zone zone3 --primary localhost --port 1885 --secondary localhost --secondary-port 1883
+.venv/bin/python node_sim.py --node-id esp_12 --zone zone3 --primary localhost --port 1885 --secondary localhost --secondary-port 1883
 ```
 
 Dashboard shows **12 nodes** across 3 zones, all **NORMAL**.
 
 ---
 
-### Demo scenario 1 — P2P alert propagation (zone isolation)
+### Demo scenario 1 — P2P alert propagation (facility-wide)
 
-In the `esp_01` terminal (zone1):
+In the `esp_01` terminal (zone1, on SBC-1):
 ```
 gas_critical
 ```
 
 **Dashboard:**
 - `esp_01` → red, blinking → `FAULT`
-- `esp_02`, `esp_03`, `esp_04` → orange → `PEER ALARM` (same zone, no central server involved)
-- `esp_05`–`esp_12` → green → `NORMAL` (different zones — unaffected)
+- All other 11 nodes → orange, blinking → `PEER ALARM`  
+  (SBC-1 bridges the alert to SBC-2 and SBC-3 — no central server involved in the alarm logic)
 - Critical counter increments; alert appears at the top of the live feed
 
 Clear:
 ```
 clear
 ```
-`esp_01` → NORMAL. Zone1 peers stay PEER ALARM and auto-clear after 30 s.
+`esp_01` → NORMAL. All peers stay PEER ALARM and auto-clear after 30 s.
 
 ---
 
-### Demo scenario 2 — Multi-zone emergency
+### Demo scenario 2 — Simultaneous independent faults
 
-Fire alerts in two zones at once to simulate a building-wide event.
+Two nodes in different zones fault at the same time.
 
 In the `esp_01` terminal: `flame`  
 In the `esp_05` terminal: `gas_critical`
 
-**Dashboard:** 8 nodes go red/orange simultaneously (all of zone1 and zone2). Zone3 stays green. Two critical events appear back-to-back in the alert feed.
+**Dashboard:** both `esp_01` and `esp_05` show `FAULT` (red). The remaining 10 nodes show `PEER ALARM` (orange). Two separate critical events appear in the alert feed. This shows the backend correctly distinguishes independently faulted nodes from nodes in peer-alarm state.
 
-Clear both zones when done.
+Clear both when done.
 
 ---
 
@@ -154,7 +151,7 @@ Kill SBC-1 while nodes connected to it lose their primary broker:
 podman compose stop sbc1
 ```
 
-Watch the terminals for `esp_01`, `esp_04`, `esp_07`, `esp_10` — after 3 failed reconnect attempts each switches to its secondary broker. The other 8 nodes (on SBC-2 and SBC-3) are unaffected. Dashboard keeps all 12 nodes visible.
+Watch the terminals for `esp_01`–`esp_04` (zone1) — after 3 failed reconnect attempts each switches to its secondary broker (SBC-2 :1884). The other 8 nodes (zone2 on SBC-2, zone3 on SBC-3) are unaffected. Dashboard keeps all 12 nodes visible.
 
 Restore:
 ```bash
@@ -169,6 +166,7 @@ Install `iproute2` in the containers (one-time):
 ```bash
 podman exec mqtt-sbc1 apk add --no-cache iproute2
 podman exec mqtt-sbc2 apk add --no-cache iproute2
+podman exec mqtt-sbc3 apk add --no-cache iproute2
 ```
 
 Apply congested WiFi:
@@ -176,7 +174,7 @@ Apply congested WiFi:
 cd sim && ./wifi_sim.sh --inside add 200 15   # 200 ms delay, 15% loss
 ```
 
-Trigger `gas_critical` from `esp_01`. Observe delayed delivery to zone1 peers. Restore:
+Trigger `gas_critical` from `esp_01`. Observe delayed delivery to peers on SBC-2 and SBC-3 (bridge latency adds on top of the link impairment). Restore:
 ```bash
 ./wifi_sim.sh --inside remove
 ```
@@ -226,7 +224,7 @@ Trigger `gas_critical` from `esp_01`. Observe delayed delivery to zone1 peers. R
 
 Traditional systems route all sensor data through a central server. If that server goes down, both monitoring and alarming capabilities are lost entirely.
 
-In this project the alarm logic is distributed across the ESP32 nodes themselves. When **Node A** detects a gas leak it publishes directly to MQTT; **Node B** and **Node C** receive the message as subscribers and trigger their own physical alarms (buzzer + LED) without requiring any central server. The Raspberry Pi cluster handles only logging and the remote dashboard — even if that layer is unavailable, on-site alarms continue to work.
+In this project the alarm logic is distributed across the ESP32 nodes themselves. When **Node A** detects a gas leak it publishes directly to MQTT; every other node in the facility — regardless of zone or which SBC it is connected to — receives the alert via the bridged broker mesh and triggers its own physical alarm (buzzer + LED) without requiring any central server. The Raspberry Pi cluster handles only logging and the remote dashboard — even if that layer is unavailable, on-site alarms continue to work.
 
 ---
 
@@ -301,7 +299,7 @@ p2p-fault-detection/
 │
 └── sim/                     # Linux simulation environment
     ├── docker-compose.yml   # Two Mosquitto broker containers (Podman)
-    ├── mosquitto/           # Broker configs (sbc1.conf, sbc2.conf)
+    ├── mosquitto/           # Broker configs (sbc1.conf, sbc2.conf, sbc3.conf)
     ├── node_sim.py          # Interactive ESP32 simulator
     ├── wifi_sim.sh          # tc netem WiFi impairment script
     └── requirements.txt
@@ -393,7 +391,7 @@ telemetry_log (id, timestamp, node_id, zone_id, gas_val, flame, state)
 
 #### `mqtt/subscriber.go` — MQTT Layer
 
-- Connects to two broker addresses (`MQTT_BROKER_1`, `MQTT_BROKER_2`)
+- Connects to three broker addresses (`MQTT_BROKER_1`, `MQTT_BROKER_2`, `MQTT_BROKER_3`), one paho client per broker
 - Subscribes to `facility/#` and `sbc/heartbeat/#`
 - Incoming `alert` messages → written to `event_log`
 - Incoming `telemetry` messages → `node_health` (UPSERT) + `telemetry_log` (INSERT)
@@ -650,7 +648,7 @@ All messages follow the envelope `{"type": "...", "payload": {...}}`.
 
 ## Option A — Linux Simulation (no hardware needed)
 
-Runs 12 simulated ESP32 nodes and two Mosquitto broker containers on your machine. Tests P2P alerting, broker failover, and WiFi impairment with real TCP/IP. See the [Demo](#demo) section for the full scripted walkthrough (`./demo.sh`).
+Runs 12 simulated ESP32 nodes and three Mosquitto broker containers on your machine. Tests P2P alerting, broker failover, and WiFi impairment with real TCP/IP. See the [Demo](#demo) section for the full walkthrough.
 
 ### Quick start
 
@@ -660,7 +658,7 @@ cd sim && podman compose up -d
 
 # 2. Backend
 cd backend && go build -o p2pfault . && mkdir -p data
-MQTT_BROKER_1=tcp://localhost:1883 MQTT_BROKER_2=tcp://localhost:1884 \
+MQTT_BROKER_1=tcp://localhost:1883 MQTT_BROKER_2=tcp://localhost:1884 MQTT_BROKER_3=tcp://localhost:1885 \
 SBC_NODE_ID=sbc-demo LISTEN_ADDR=:8080 DB_PATH=./data/events.db ./p2pfault &
 
 # 3. Dashboard
@@ -819,8 +817,9 @@ For production, copy `dist/` to the SBC and serve with nginx or any static file 
 
 | Variable | Default | Description |
 |---|---|---|
-| `MQTT_BROKER_1` | `tcp://192.168.1.100:1883` | Primary broker address |
-| `MQTT_BROKER_2` | `tcp://192.168.1.101:1883` | Secondary broker address |
+| `MQTT_BROKER_1` | `tcp://192.168.1.100:1883` | SBC-1 broker address |
+| `MQTT_BROKER_2` | `tcp://192.168.1.101:1883` | SBC-2 broker address |
+| `MQTT_BROKER_3` | `tcp://192.168.1.102:1883` | SBC-3 broker address |
 | `SBC_NODE_ID` | `sbc-1` | Identity of this SBC instance |
 | `LISTEN_ADDR` | `:8080` | HTTP + WebSocket listen address |
 | `DB_PATH` | `./data/events.db` | SQLite database file path |

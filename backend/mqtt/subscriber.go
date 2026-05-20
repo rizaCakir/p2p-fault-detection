@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	paho "github.com/eclipse/paho.mqtt.golang"
@@ -19,21 +20,23 @@ import (
 // Instantiate one Subscriber per broker to receive messages from all brokers
 // simultaneously (paho connects to exactly one broker per client).
 type Subscriber struct {
-	broker  string
-	db      *db.DB
-	hub     *api.Hub
-	nodeID  string
-	tracker *registry.SBCTracker
-	client  paho.Client
+	broker     string
+	db         *db.DB
+	hub        *api.Hub
+	nodeID     string
+	tracker    *registry.SBCTracker
+	client     paho.Client
+	alertDedup *sync.Map // shared across all Subscriber instances; prevents triple DB writes from bridge delivery
 }
 
-func NewSubscriber(broker string, database *db.DB, hub *api.Hub, nodeID string, tracker *registry.SBCTracker) *Subscriber {
+func NewSubscriber(broker string, database *db.DB, hub *api.Hub, nodeID string, tracker *registry.SBCTracker, alertDedup *sync.Map) *Subscriber {
 	return &Subscriber{
-		broker:  broker,
-		db:      database,
-		hub:     hub,
-		nodeID:  nodeID,
-		tracker: tracker,
+		broker:     broker,
+		db:         database,
+		hub:        hub,
+		nodeID:     nodeID,
+		tracker:    tracker,
+		alertDedup: alertDedup,
 	}
 }
 
@@ -76,16 +79,33 @@ func (s *Subscriber) onFacilityMessage(_ paho.Client, msg paho.Message) {
 	parts := strings.Split(msg.Topic(), "/")
 	switch {
 	case len(parts) == 3 && parts[2] == "alerts":
-		s.handleAlert(parts[1], msg.Payload())
+		s.handleAlert(msg.Topic(), parts[1], msg.Payload())
 	case len(parts) == 4 && parts[3] == "telemetry":
 		s.handleTelemetry(msg.Payload())
 	}
 }
 
-func (s *Subscriber) handleAlert(zoneID string, raw []byte) {
+func (s *Subscriber) handleAlert(topic, zoneID string, raw []byte) {
 	var alert models.AlertPayload
 	if err := json.Unmarshal(raw, &alert); err != nil {
 		log.Printf("[MQTT] bad alert payload: %v", err)
+		return
+	}
+
+	// Deduplicate: after forwarding below, the other broker subscribers will also
+	// receive this message. The shared alertDedup map ensures only the first
+	// subscriber to process each alert/clear actually acts on it.
+	key := alert.NodeID + "|" + string(alert.Type)
+	now := time.Now()
+	if prev, loaded := s.alertDedup.LoadOrStore(key, now); loaded {
+		if now.Sub(prev.(time.Time)) < 5*time.Second {
+			return
+		}
+		s.alertDedup.Store(key, now)
+	}
+
+	// Clear messages are bridged by Mosquitto; nothing to log.
+	if alert.Type == "" || alert.Type == "none" {
 		return
 	}
 
@@ -95,7 +115,7 @@ func (s *Subscriber) handleAlert(zoneID string, raw []byte) {
 	}
 
 	event := &models.EventLog{
-		Timestamp: time.Now(),
+		Timestamp: now,
 		NodeID:    alert.NodeID,
 		ZoneID:    zoneID,
 		FaultType: alert.Type,

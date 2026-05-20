@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -45,21 +46,25 @@ func main() {
 	// paho connects to exactly one broker per client, so we create a
 	// separate Subscriber for each broker to receive messages from all nodes
 	// regardless of which broker they are connected to.
-	sub1 := mqtt.NewSubscriber(mqttBroker1, database, hub, sbcNodeID, tracker)
+	// alertDedup is shared so bridged alerts arriving on multiple brokers
+	// are written to the DB only once.
+	alertDedup := &sync.Map{}
+
+	sub1 := mqtt.NewSubscriber(mqttBroker1, database, hub, sbcNodeID, tracker, alertDedup)
 	if err := sub1.Connect(); err != nil {
 		log.Fatalf("MQTT connect to broker1 failed: %v", err)
 	}
 	defer sub1.Disconnect()
 	go sub1.StartHeartbeat(30 * time.Second)
 
-	sub2 := mqtt.NewSubscriber(mqttBroker2, database, hub, sbcNodeID, tracker)
+	sub2 := mqtt.NewSubscriber(mqttBroker2, database, hub, sbcNodeID, tracker, alertDedup)
 	if err := sub2.Connect(); err != nil {
 		log.Printf("[MQTT] broker2 unavailable (%v) – continuing without it", err)
 	} else {
 		defer sub2.Disconnect()
 	}
 
-	sub3 := mqtt.NewSubscriber(mqttBroker3, database, hub, sbcNodeID, tracker)
+	sub3 := mqtt.NewSubscriber(mqttBroker3, database, hub, sbcNodeID, tracker, alertDedup)
 	if err := sub3.Connect(); err != nil {
 		log.Printf("[MQTT] broker3 unavailable (%v) – continuing without it", err)
 	} else {

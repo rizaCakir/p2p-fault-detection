@@ -95,6 +95,7 @@ class NodeSim:
         self._state          = NodeState.IDLE
         self._fault          = FaultType.NONE
         self._peer_alarm_at: float | None = None
+        self._alerting_peers: set[str]    = set()  # peers currently in FAULT
 
         self._client = mqtt.Client(client_id=f"sim-{node_id}", clean_session=True)
         self._client.on_connect    = self._on_connect
@@ -180,16 +181,18 @@ class NodeSim:
             return
 
         if fault == FaultType.NONE:
+            self._handle_peer_clear(sender)
             return
 
         self._log(f"PEER ALERT ← {sender}  type={raw_type}  val={val}")
-        self._handle_peer_alert(fault)
+        self._handle_peer_alert(fault, sender)
 
     # ── FSM transitions (mirror AlertManager.cpp) ─────────────────────────────
 
-    def _handle_peer_alert(self, fault: FaultType):
+    def _handle_peer_alert(self, fault: FaultType, sender: str):
         """Mirror AlertManager::onPeerAlert() — local fault has priority."""
         with self._lock:
+            self._alerting_peers.add(sender)
             if self._state == NodeState.FAULT_DETECTED:
                 self._log("  └─ ignored (local fault has priority)")
                 return
@@ -201,9 +204,20 @@ class NodeSim:
                 prev = self._state
                 self._state = NodeState.PEER_ALARM_ACTIVE
                 self._log(f"  └─ {prev.value} → PEER_ALARM_ACTIVE  "
-                          f"(auto-clears in {PEER_ALARM_TIMEOUT}s)")
+                          f"(auto-clears in {PEER_ALARM_TIMEOUT}s if peer stays silent)")
             else:
                 self._log("  └─ timeout refreshed")
+
+    def _handle_peer_clear(self, sender: str):
+        """Immediately clear PEER_ALARM once every alerting peer has recovered."""
+        with self._lock:
+            self._alerting_peers.discard(sender)
+            if self._state != NodeState.PEER_ALARM_ACTIVE or self._alerting_peers:
+                return
+            self._state         = NodeState.IDLE
+            self._fault         = FaultType.NONE
+            self._peer_alarm_at = None
+        self._log(f"PEER CLEAR ← {sender}  → IDLE ✓")
 
     def inject_fault(self, fault: FaultType, val: int):
         """Mirror main.cpp sensor-poll block — only publishes on state change (fix #1)."""
@@ -257,13 +271,14 @@ class NodeSim:
         while True:
             time.sleep(TELEMETRY_INTERVAL)
             with self._lock:
-                gas_val = (GAS_VAL_WARNING  if self._fault == FaultType.GAS_WARNING  else
-                           GAS_VAL_CRITICAL if self._fault == FaultType.GAS_CRITICAL else 0)
+                local_fault = self._state == NodeState.FAULT_DETECTED
+                gas_val = (GAS_VAL_WARNING  if (local_fault and self._fault == FaultType.GAS_WARNING)  else
+                           GAS_VAL_CRITICAL if (local_fault and self._fault == FaultType.GAS_CRITICAL) else 0)
                 payload = {
                     "node_id":   self.node_id,
                     "zone_id":   self.zone_id,
                     "gas_val":   gas_val,
-                    "flame":     self._fault == FaultType.FLAME,
+                    "flame":     local_fault and self._fault == FaultType.FLAME,
                     "state":     state_to_int[self._state],
                     "timestamp": int(time.time() * 1000),
                 }
@@ -281,7 +296,7 @@ class NodeSim:
             "val":       val,
             "timestamp": int(time.time() * 1000),
         }
-        self._client.publish(self.TOPIC_ALERTS, json.dumps(payload), qos=1, retain=True)
+        self._client.publish(self.TOPIC_ALERTS, json.dumps(payload), qos=1, retain=False)
         self._log(f"  └─ published → {self.TOPIC_ALERTS}")
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
