@@ -51,3 +51,16 @@ services:
       - ./mosquitto/sbc2.conf:/mosquitto/config/mosquitto.conf:ro
     cap_add:
       - NET_ADMIN
+
+  sbc3:
+    image: eclipse-mosquitto:2
+    container_name: mqtt-sbc3
+    networks:
+      facility_lan:
+        ipv4_address: 192.168.1.102
+    ports:
+      - "1885:1883"
+    volumes:
+      - ./mosquitto/sbc3.conf:/mosquitto/config/mosquitto.conf:ro
+    cap_add:
+      - NET_ADMIN

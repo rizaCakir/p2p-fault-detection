@@ -19,6 +19,7 @@ func main() {
 	// ── Config from environment (with sensible defaults) ──────────────
 	mqttBroker1 := getEnv("MQTT_BROKER_1", "tcp://192.168.1.100:1883")
 	mqttBroker2 := getEnv("MQTT_BROKER_2", "tcp://192.168.1.101:1883")
+	mqttBroker3 := getEnv("MQTT_BROKER_3", "tcp://192.168.1.102:1883")
 	sbcNodeID   := getEnv("SBC_NODE_ID",   "sbc-1")
 	listenAddr  := getEnv("LISTEN_ADDR",   ":8080")
 	dbPath      := getEnv("DB_PATH",       "./data/events.db")
@@ -53,9 +54,16 @@ func main() {
 
 	sub2 := mqtt.NewSubscriber(mqttBroker2, database, hub, sbcNodeID, tracker)
 	if err := sub2.Connect(); err != nil {
-		log.Printf("[MQTT] broker2 unavailable (%v) – continuing with broker1 only", err)
+		log.Printf("[MQTT] broker2 unavailable (%v) – continuing without it", err)
 	} else {
 		defer sub2.Disconnect()
+	}
+
+	sub3 := mqtt.NewSubscriber(mqttBroker3, database, hub, sbcNodeID, tracker)
+	if err := sub3.Connect(); err != nil {
+		log.Printf("[MQTT] broker3 unavailable (%v) – continuing without it", err)
+	} else {
+		defer sub3.Disconnect()
 	}
 
 	// ── HTTP server ───────────────────────────────────────────────────

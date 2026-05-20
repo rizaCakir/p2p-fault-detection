@@ -35,18 +35,24 @@ Full end-to-end demo on a single Linux machine — no ESP32 hardware needed.
 
 | Node | Zone | Primary broker |
 |------|------|----------------|
-| esp_01, esp_03 | zone1 | SBC-1 :1883 |
-| esp_02, esp_04 | zone1 | SBC-2 :1884 |
-| esp_05, esp_07 | zone2 | SBC-1 :1883 |
-| esp_06, esp_08 | zone2 | SBC-2 :1884 |
-| esp_09, esp_11 | zone3 | SBC-1 :1883 |
-| esp_10, esp_12 | zone3 | SBC-2 :1884 |
+| esp_01, esp_04 | zone1 | SBC-1 :1883 |
+| esp_02, esp_05 | zone2 | SBC-2 :1884 |
+| esp_03, esp_06 | zone3 | SBC-3 :1885 |
+| esp_07, esp_10 | zone1 | SBC-1 :1883 |
+| esp_08, esp_11 | zone2 | SBC-2 :1884 |
+| esp_09, esp_12 | zone3 | SBC-3 :1885 |
 
-### Terminal 1 — MQTT broker cluster
+### Terminal 1 — MQTT broker cluster (3 SBCs)
 
 ```bash
 cd sim && podman compose up
 ```
+
+| Container | Simulates | Port |
+|-----------|-----------|------|
+| `mqtt-sbc1` | Raspberry Pi SBC-1 | 1883 |
+| `mqtt-sbc2` | Raspberry Pi SBC-2 | 1884 |
+| `mqtt-sbc3` | Raspberry Pi SBC-3 | 1885 |
 
 ### Terminal 2 — Go backend
 
@@ -54,6 +60,7 @@ cd sim && podman compose up
 cd backend && go build -o p2pfault . && mkdir -p data
 MQTT_BROKER_1=tcp://localhost:1883 \
 MQTT_BROKER_2=tcp://localhost:1884 \
+MQTT_BROKER_3=tcp://localhost:1885 \
 SBC_NODE_ID=sbc-demo LISTEN_ADDR=:8080 DB_PATH=./data/events.db \
 ./p2pfault
 ```
@@ -75,21 +82,21 @@ cd sim && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 ```bash
 cd sim
-# zone1
+# zone1 — nodes cycle across all 3 brokers
 .venv/bin/python node_sim.py --node-id esp_01 --zone zone1 --primary localhost --port 1883 --secondary localhost --secondary-port 1884
-.venv/bin/python node_sim.py --node-id esp_02 --zone zone1 --primary localhost --port 1884 --secondary localhost --secondary-port 1883
-.venv/bin/python node_sim.py --node-id esp_03 --zone zone1 --primary localhost --port 1883 --secondary localhost --secondary-port 1884
-.venv/bin/python node_sim.py --node-id esp_04 --zone zone1 --primary localhost --port 1884 --secondary localhost --secondary-port 1883
+.venv/bin/python node_sim.py --node-id esp_02 --zone zone1 --primary localhost --port 1884 --secondary localhost --secondary-port 1885
+.venv/bin/python node_sim.py --node-id esp_03 --zone zone1 --primary localhost --port 1885 --secondary localhost --secondary-port 1883
+.venv/bin/python node_sim.py --node-id esp_04 --zone zone1 --primary localhost --port 1883 --secondary localhost --secondary-port 1885
 # zone2
-.venv/bin/python node_sim.py --node-id esp_05 --zone zone2 --primary localhost --port 1883 --secondary localhost --secondary-port 1884
-.venv/bin/python node_sim.py --node-id esp_06 --zone zone2 --primary localhost --port 1884 --secondary localhost --secondary-port 1883
+.venv/bin/python node_sim.py --node-id esp_05 --zone zone2 --primary localhost --port 1884 --secondary localhost --secondary-port 1883
+.venv/bin/python node_sim.py --node-id esp_06 --zone zone2 --primary localhost --port 1885 --secondary localhost --secondary-port 1884
 .venv/bin/python node_sim.py --node-id esp_07 --zone zone2 --primary localhost --port 1883 --secondary localhost --secondary-port 1884
-.venv/bin/python node_sim.py --node-id esp_08 --zone zone2 --primary localhost --port 1884 --secondary localhost --secondary-port 1883
+.venv/bin/python node_sim.py --node-id esp_08 --zone zone2 --primary localhost --port 1884 --secondary localhost --secondary-port 1885
 # zone3
-.venv/bin/python node_sim.py --node-id esp_09 --zone zone3 --primary localhost --port 1883 --secondary localhost --secondary-port 1884
-.venv/bin/python node_sim.py --node-id esp_10 --zone zone3 --primary localhost --port 1884 --secondary localhost --secondary-port 1883
-.venv/bin/python node_sim.py --node-id esp_11 --zone zone3 --primary localhost --port 1883 --secondary localhost --secondary-port 1884
-.venv/bin/python node_sim.py --node-id esp_12 --zone zone3 --primary localhost --port 1884 --secondary localhost --secondary-port 1883
+.venv/bin/python node_sim.py --node-id esp_09 --zone zone3 --primary localhost --port 1885 --secondary localhost --secondary-port 1883
+.venv/bin/python node_sim.py --node-id esp_10 --zone zone3 --primary localhost --port 1883 --secondary localhost --secondary-port 1885
+.venv/bin/python node_sim.py --node-id esp_11 --zone zone3 --primary localhost --port 1884 --secondary localhost --secondary-port 1883
+.venv/bin/python node_sim.py --node-id esp_12 --zone zone3 --primary localhost --port 1885 --secondary localhost --secondary-port 1884
 ```
 
 Dashboard shows **12 nodes** across 3 zones, all **NORMAL**.
@@ -142,12 +149,12 @@ Local fault always takes priority.
 
 ### Demo scenario 4 — Broker failover
 
-Kill SBC-1 (half the nodes lose their primary broker):
+Kill SBC-1 while nodes connected to it lose their primary broker:
 ```bash
 podman compose stop sbc1
 ```
 
-Watch the terminals for `esp_01`, `esp_03`, `esp_05`, `esp_07`, `esp_09`, `esp_11` — after 3 failed reconnect attempts each switches to SBC-2. Dashboard keeps all 12 nodes visible.
+Watch the terminals for `esp_01`, `esp_04`, `esp_07`, `esp_10` — after 3 failed reconnect attempts each switches to its secondary broker. The other 8 nodes (on SBC-2 and SBC-3) are unaffected. Dashboard keeps all 12 nodes visible.
 
 Restore:
 ```bash
