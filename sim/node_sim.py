@@ -74,7 +74,8 @@ class FaultType(Enum):
 class NodeSim:
     def __init__(self, node_id: str, zone_id: str,
                  primary: str, secondary: str,
-                 port: int, secondary_port: int):
+                 port: int, secondary_port: int,
+                 secondary_zone: str | None = None):
         self.node_id = node_id
         self.zone_id = zone_id
 
@@ -85,8 +86,9 @@ class NodeSim:
         self._reconnect_delay = RECONNECT_BASE_DELAY
         self._broker_lock    = threading.Lock()
 
-        # Topics — identical to firmware config.h macros
-        self.TOPIC_ALERTS    = f"facility/{zone_id}/alerts"
+        # Each broker serves a zone; alert topic switches on failover
+        self._zones          = [zone_id, secondary_zone or zone_id]
+
         self.TOPIC_TELEMETRY = f"facility/{zone_id}/{node_id}/telemetry"
         self.TOPIC_SUBSCRIBE = "facility/+/alerts"
 
@@ -119,6 +121,10 @@ class NodeSim:
         host, port = self._brokers[self._broker_idx]
         return f"{host}:{port}"
 
+    @property
+    def _alert_topic(self) -> str:
+        return f"facility/{self._zones[self._broker_idx]}/alerts"
+
     # ── MQTT callbacks ────────────────────────────────────────────────────────
 
     def _on_connect(self, client, _userdata, _flags, rc):
@@ -148,7 +154,9 @@ class NodeSim:
                 self._broker_idx      = 1 - self._broker_idx  # toggle
                 self._failed_attempts = 0
                 new_label = "primary" if self._broker_idx == 0 else "secondary"
-                self._log(f"  ⚡ Switching to {new_label} broker → {self._active_broker_str}")
+                new_zone  = self._zones[self._broker_idx]
+                self._log(f"  ⚡ Switching to {new_label} broker → {self._active_broker_str}  "
+                          f"alert-topic=facility/{new_zone}/alerts")
 
             self._reconnect_delay = min(
                 self._reconnect_delay * 2, RECONNECT_MAX_DELAY
@@ -289,15 +297,16 @@ class NodeSim:
     # ── MQTT publish ──────────────────────────────────────────────────────────
 
     def _publish_alert(self, fault: FaultType, val: int):
+        topic = self._alert_topic
         payload = {
             "node_id":   self.node_id,
-            "zone_id":   self.zone_id,
+            "zone_id":   self._zones[self._broker_idx],
             "type":      fault.value,
             "val":       val,
             "timestamp": int(time.time() * 1000),
         }
-        self._client.publish(self.TOPIC_ALERTS, json.dumps(payload), qos=1, retain=False)
-        self._log(f"  └─ published → {self.TOPIC_ALERTS}")
+        self._client.publish(topic, json.dumps(payload), qos=1, retain=False)
+        self._log(f"  └─ published → {topic}")
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -353,11 +362,15 @@ def main():
                         help="Secondary broker host (SBC-2)")
     parser.add_argument("--secondary-port", type=int, default=1883,
                         help="Secondary broker port (use 1884 with rootless port mapping)")
+    parser.add_argument("--secondary-zone", default=None,
+                        help="Zone served by the secondary broker; alert topic switches on failover "
+                             "(e.g. zone2 ESP failing over to SBC-1 should pass --secondary-zone zone1)")
     args = parser.parse_args()
 
     node = NodeSim(args.node_id, args.zone,
                    args.primary, args.secondary,
-                   args.port, args.secondary_port)
+                   args.port, args.secondary_port,
+                   args.secondary_zone)
     node.start()
 
     try:
