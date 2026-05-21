@@ -50,8 +50,7 @@ bool MqttTransceiver::reconnectMqtt() {
     _failedAttempts++;
     Serial.printf("[MQTT] connect failed (rc=%d) attempt=%d\n", _client.state(), _failedAttempts);
 
-    // After 3 consecutive failures, try the other broker
-    if (_failedAttempts >= 3) {
+    if (_failedAttempts >= BROKER_SWITCH_AFTER) {
         switchBroker();
         _failedAttempts = 0;
     }

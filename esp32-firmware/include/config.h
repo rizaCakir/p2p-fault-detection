@@ -37,6 +37,7 @@
 #define TELEMETRY_INTERVAL_MS   5000
 #define RECONNECT_BASE_DELAY_MS 1000
 #define RECONNECT_MAX_DELAY_MS 30000
+#define BROKER_SWITCH_AFTER     1    // failed attempts before switching to the other broker
 #define WIFI_RETRY_INTERVAL_MS  5000  // non-blocking WiFi retry cadence
 #define PEER_ALARM_TIMEOUT_MS  30000  // auto-clear peer alarm if no repeat within 30 s
 

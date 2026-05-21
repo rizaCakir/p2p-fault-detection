@@ -49,7 +49,7 @@ TELEMETRY_INTERVAL   = 5.0   # seconds  (TELEMETRY_INTERVAL_MS)
 PEER_ALARM_TIMEOUT   = 30.0  # seconds  (PEER_ALARM_TIMEOUT_MS)
 RECONNECT_BASE_DELAY = 1.0   # seconds  (RECONNECT_BASE_DELAY_MS)
 RECONNECT_MAX_DELAY  = 30.0  # seconds  (RECONNECT_MAX_DELAY_MS)
-BROKER_SWITCH_AFTER  = 3     # failures before switching broker (mirrors firmware)
+BROKER_SWITCH_AFTER  = 1     # failures before switching broker (mirrors firmware)
 
 GAS_VAL_WARNING  = 1800
 GAS_VAL_CRITICAL = 3000
