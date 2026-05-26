@@ -161,7 +161,7 @@ Option B — from anywhere (uses the container name directly):
 podman stop mqtt-sbc1
 ```
 
-Watch the terminals for `esp_01`–`esp_04` (zone1) — after 3 failed reconnect attempts each switches to its secondary broker (SBC-2 :1884) and changes its publish topic from `facility/zone1/alerts` to `facility/zone2/alerts`. SBC-1 and SBC-3 already pull `zone2/alerts` from SBC-2 via their `in` bridges, so cross-zone alarm propagation continues uninterrupted. The other 8 nodes (zone2 on SBC-2, zone3 on SBC-3) are unaffected. Dashboard keeps all 12 nodes visible.
+Watch the terminals for `esp_01`–`esp_04` (zone1) — after the first failed reconnect attempt each switches to its secondary broker (SBC-2 :1884) and changes its publish topic from `facility/zone1/alerts` to `facility/zone2/alerts`. SBC-1 and SBC-3 already pull `zone2/alerts` from SBC-2 via their `in` bridges, so cross-zone alarm propagation continues uninterrupted. The other 8 nodes (zone2 on SBC-2, zone3 on SBC-3) are unaffected. Dashboard keeps all 12 nodes visible.
 
 Restore:
 ```bash
@@ -175,19 +175,24 @@ podman start mqtt-sbc1
 
 ### Demo scenario 5 — WiFi impairment
 
-Install `iproute2` in the containers (one-time):
+`iproute2` is pre-installed in the containers automatically on every `podman compose up` — no manual setup needed.
+
+Apply impairment (run from the `sim/` directory):
 ```bash
-podman exec mqtt-sbc1 apk add --no-cache iproute2
-podman exec mqtt-sbc2 apk add --no-cache iproute2
-podman exec mqtt-sbc3 apk add --no-cache iproute2
+# default — 500 ms delay, 5% loss (all three SBCs)
+./wifi_sim.sh --inside add
+
+# or use a named preset
+./wifi_sim.sh --inside preset good       # 150 ms,  1% loss — normal indoor WiFi
+./wifi_sim.sh --inside preset congested  # 500 ms,  5% loss — crowded 2.4 GHz
+./wifi_sim.sh --inside preset poor       # 1000 ms, 15% loss — edge of coverage
+./wifi_sim.sh --inside preset critical   # 2000 ms, 30% loss — nearly disconnected
+
+# custom values
+./wifi_sim.sh --inside add <delay_ms> <loss_%>
 ```
 
-Apply congested WiFi:
-```bash
-cd sim && ./wifi_sim.sh --inside add 200 15   # 200 ms delay, 15% loss
-```
-
-Trigger `gas_critical` from `esp_01`. Observe delayed delivery to peers on SBC-2 and SBC-3 (bridge latency adds on top of the link impairment). Restore:
+Trigger `gas_critical` from `esp_01`. Observe the delayed delivery to peers on SBC-2 and SBC-3. Restore:
 ```bash
 ./wifi_sim.sh --inside remove
 ```

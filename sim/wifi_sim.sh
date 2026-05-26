@@ -18,16 +18,16 @@
 #                                              (works with rootless Podman)
 #
 # Presets:
-#   good        40ms ±10ms, 0.5% loss   – normal indoor WiFi
-#   congested  120ms ±40ms, 5%  loss   – crowded 2.4 GHz
-#   poor       200ms ±80ms, 15% loss   – edge of coverage
-#   critical   400ms ±100ms, 35% loss  – nearly-disconnected link
+#   good        150ms  ±37ms,  1% loss  – normal indoor WiFi
+#   congested   500ms ±125ms,  5% loss  – crowded 2.4 GHz
+#   poor       1000ms ±250ms, 15% loss  – edge of coverage
+#   critical   2000ms ±500ms, 30% loss  – nearly-disconnected link
 
 set -euo pipefail
 
 COMPOSE_PROJECT="sim"
 NETWORK_NAME="${COMPOSE_PROJECT}_facility_lan"
-CONTAINERS=("mqtt-sbc1" "mqtt-sbc2")
+CONTAINERS=("mqtt-sbc1" "mqtt-sbc2" "mqtt-sbc3")
 
 # ── Find the Podman bridge interface ──────────────────────────────────────────
 # podman network inspect exposes the interface name directly via NetworkInterface.
@@ -90,10 +90,10 @@ remove_inside() {
 
 resolve_preset() {
     case "$1" in
-        good)      echo "40  0.5" ;;
-        congested) echo "120 5"   ;;
-        poor)      echo "200 15"  ;;
-        critical)  echo "400 35"  ;;
+        good)      echo "150  1"  ;;
+        congested) echo "500  5"  ;;
+        poor)      echo "1000 15" ;;
+        critical)  echo "2000 30" ;;
         *)
             echo "Unknown preset '$1'. Choose: good | congested | poor | critical" >&2
             exit 1
@@ -114,8 +114,8 @@ CMD="${1:-status}"
 case "$CMD" in
 
     add)
-        DELAY="${2:-40}"
-        LOSS="${3:-2}"
+        DELAY="${2:-500}"
+        LOSS="${3:-5}"
         if $INSIDE; then
             apply_inside "$DELAY" "$LOSS"
         else

@@ -31,13 +31,13 @@ services:
     networks:
       facility_lan:
         ipv4_address: 192.168.1.100
-    # Port mapping kept as fallback in case direct bridge routing is blocked
     ports:
       - "1883:1883"
     volumes:
       - ./mosquitto/sbc1.conf:/mosquitto/config/mosquitto.conf:ro
     cap_add:
-      - NET_ADMIN   # lets wifi_sim.sh apply tc inside the container if needed
+      - NET_ADMIN
+    entrypoint: ["/bin/sh", "-c", "apk add --no-cache iproute2 -q && /docker-entrypoint.sh /usr/sbin/mosquitto -c /mosquitto/config/mosquitto.conf"]
 
   sbc2:
     image: eclipse-mosquitto:2
@@ -51,6 +51,7 @@ services:
       - ./mosquitto/sbc2.conf:/mosquitto/config/mosquitto.conf:ro
     cap_add:
       - NET_ADMIN
+    entrypoint: ["/bin/sh", "-c", "apk add --no-cache iproute2 -q && /docker-entrypoint.sh /usr/sbin/mosquitto -c /mosquitto/config/mosquitto.conf"]
 
   sbc3:
     image: eclipse-mosquitto:2
@@ -64,3 +65,4 @@ services:
       - ./mosquitto/sbc3.conf:/mosquitto/config/mosquitto.conf:ro
     cap_add:
       - NET_ADMIN
+    entrypoint: ["/bin/sh", "-c", "apk add --no-cache iproute2 -q && /docker-entrypoint.sh /usr/sbin/mosquitto -c /mosquitto/config/mosquitto.conf"]
